@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StockSync — Serallê | Sampa Full</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root {
+  --bg: #f5f6fa;
+  --surface: #ffffff;
+  --surface2: #f0f2f8;
+  --surface3: #e8eaf2;
+  --border: #e2e5f0;
+  --border2: #cdd1e8;
+  --ink: #0d1224;
+  --ink2: #1e2540;
+  --ink3: #2d3660;
+  --slate: #5a6380;
+  --mist: #8892ae;
+  --ghost: #a8b0c8;
+  --accent: #ff5200;
+  --accent2: #ff7a3d;
+  --blue: #1a5ce5;
+  --blue-bg: #eef3ff;
+  --blue-border: #c5d4fa;
+  --green: #00a86b;
+  --green-bg: #e6f7f1;
+  --green-border: #99dfc6;
+  --red: #d42b2b;
+  --red-bg: #fff0f0;
+  --red-border: #f5b8b8;
+  --amber: #c97c00;
+  --amber-bg: #fff8e6;
+  --amber-border: #f0d080;
+  --purple: #6b48e8;
+  --purple-bg: #f0edff;
+  --purple-border: #c9bff8;
+  --shadow-sm: 0 1px 3px rgba(13,18,36,0.07), 0 1px 2px rgba(13,18,36,0.04);
+  --shadow-md: 0 4px 16px rgba(13,18,36,0.08), 0 1px 4px rgba(13,18,36,0.05);
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: 'Instrument Sans', sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+}
+
+/* HEADER */
+.header {
+  position: sticky; top: 0; z-index: 100;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 28px; height: 58px;
+  box-shadow: var(--shadow-sm);
+}
+.logo {
+  display: flex; align-items: center; gap: 10px;
+  font-family: 'Syne', sans-serif;
+  font-weight: 800; font-size: 17px; letter-spacing: -0.4px;
+  color: var(--ink);
+}
+.logo-mark {
+  width: 30px; height: 30px;
+  background: var(--accent);
+  clip-path: polygon(0 0, 100% 0, 100% 72%, 72% 100%, 0 100%);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 900; color: white;
+  font-family: 'DM Mono', monospace;
+  flex-shrink: 0;
+}
+.header-meta { display: flex; align-items: center; gap: 16px; }
+.filial-badge {
+  background: var(--blue-bg); border: 1px solid var(--blue-border);
+  padding: 4px 12px; border-radius: 5px;
+  font-family: 'DM Mono', monospace;
+  font-size: 11px; color: var(--blue); letter-spacing: 0.2px;
+}
+.sync-info {
+  font-family: 'DM Mono', monospace;
+  font-size: 11px; color: var(--mist);
+  display: flex; align-items: center; gap: 6px;
+}
+.dot-live { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+
+/* LAYOUT */
+.layout { display: flex; height: calc(100vh - 58px); }
+.sidebar {
+  width: 210px; flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 18px 0; overflow-y: auto;
+}
+.main { flex: 1; overflow-y: auto; padding: 26px 28px; background: var(--bg); }
+
+/* SIDEBAR */
+.nav-section { margin-bottom: 24px; }
+.nav-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px; color: var(--ghost);
+  letter-spacing: 1.4px; text-transform: uppercase;
+  padding: 0 18px; margin-bottom: 6px;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 18px; cursor: pointer;
+  font-size: 13px; color: var(--slate);
+  border-left: 2.5px solid transparent;
+  transition: all 0.12s; user-select: none;
+}
+.nav-item:hover { color: var(--ink); background: var(--surface2); }
+.nav-item.active {
+  color: var(--blue); background: var(--blue-bg);
+  border-left-color: var(--blue);
+  font-weight: 500;
+}
+.nav-icon { font-size: 13px; width: 16px; text-align: center; flex-shrink: 0; }
+.nav-badge {
+  margin-left: auto;
+  font-family: 'DM Mono', monospace; font-size: 9px; font-weight: 500;
+  padding: 2px 6px; border-radius: 3px; letter-spacing: 0.2px;
+}
+.nb-red { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+.nb-purple { background: var(--purple-bg); color: var(--purple); border: 1px solid var(--purple-border); }
+.nb-amber { background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-border); }
+.nav-divider { height: 1px; background: var(--border); margin: 6px 18px; }
+
+/* METRICS */
+.metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+.metric {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 16px 18px;
+  box-shadow: var(--shadow-sm);
+  border-top: 3px solid var(--bar-color, var(--blue));
+  transition: box-shadow 0.2s;
+}
+.metric:hover { box-shadow: var(--shadow-md); }
+.metric-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px; color: var(--mist);
+  letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px;
+}
+.metric-val {
+  font-family: 'Syne', sans-serif;
+  font-size: 28px; font-weight: 800; color: var(--ink); line-height: 1;
+  margin-bottom: 5px;
+}
+.metric-sub { font-size: 11px; color: var(--mist); }
+.m-blue { --bar-color: var(--blue); }
+.m-red { --bar-color: var(--red); }
+.m-green { --bar-color: var(--green); }
+.m-amber { --bar-color: var(--amber); }
+
+/* CARDS */
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 20px;
+  box-shadow: var(--shadow-sm); margin-bottom: 16px;
+}
+.card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px;
+}
+.card-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 14px; font-weight: 700; color: var(--ink);
+}
+.card-sub { font-size: 11px; color: var(--mist); margin-top: 2px; }
+
+/* TABLE */
+.table-wrap { overflow-x: auto; border-radius: 8px; border: 1px solid var(--border); }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+thead th {
+  background: var(--surface2);
+  padding: 9px 13px; text-align: left;
+  font-family: 'DM Mono', monospace;
+  font-size: 9px; color: var(--mist);
+  text-transform: uppercase; letter-spacing: 0.6px;
+  border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+tbody tr { border-bottom: 1px solid var(--surface2); transition: background 0.1s; }
+tbody tr:last-child { border-bottom: none; }
+tbody tr:hover { background: var(--surface2); }
+tbody td { padding: 9px 13px; color: var(--slate); vertical-align: middle; }
+td.t-name { color: var(--ink); font-weight: 500; max-width: 220px; }
+td.t-name span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+td.t-mono { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--mist); }
+td.t-num { text-align: right; font-family: 'DM Mono', monospace; font-variant-numeric: tabular-nums; color: var(--ink2); }
+td.t-neg { text-align: right; color: var(--red); font-weight: 700; font-family: 'DM Mono', monospace; }
+td.t-pos { text-align: right; color: var(--blue); font-weight: 700; font-family: 'DM Mono', monospace; }
+td.t-ok { text-align: right; color: var(--green); font-weight: 700; font-family: 'DM Mono', monospace; }
+
+/* CHIPS */
+.chip {
+  display: inline-flex; align-items: center;
+  padding: 3px 8px; border-radius: 4px;
+  font-family: 'DM Mono', monospace;
+  font-size: 9px; font-weight: 500; letter-spacing: 0.3px;
+  white-space: nowrap; text-transform: uppercase;
+}
+.c-ok { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+.c-neg { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+.c-pos { background: var(--blue-bg); color: var(--blue); border: 1px solid var(--blue-border); }
+.c-erp { background: var(--purple-bg); color: var(--purple); border: 1px solid var(--purple-border); }
+.c-ml { background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-border); }
+
+/* TOOLBAR */
+.toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.search-wrap { position: relative; flex: 1; min-width: 200px; }
+.search-wrap input {
+  width: 100%; padding: 8px 12px 8px 34px;
+  background: var(--surface); border: 1px solid var(--border2);
+  border-radius: 6px; color: var(--ink); font-size: 13px;
+  font-family: 'Instrument Sans', sans-serif;
+  outline: none; transition: border-color 0.15s;
+}
+.search-wrap input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(26,92,229,0.1); }
+.search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--ghost); font-size: 13px; pointer-events: none; }
+select.flt {
+  padding: 8px 11px;
+  background: var(--surface); border: 1px solid var(--border2);
+  border-radius: 6px; color: var(--slate); font-size: 12px;
+  font-family: 'Instrument Sans', sans-serif; outline: none; cursor: pointer;
+}
+select.flt:focus { border-color: var(--blue); }
+.btn { padding: 8px 14px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; border: none; transition: all 0.12s; font-family: 'Instrument Sans', sans-serif; }
+.btn-ghost { background: var(--surface); color: var(--slate); border: 1px solid var(--border2); }
+.btn-ghost:hover { background: var(--surface2); color: var(--ink); }
+.btn-primary { background: var(--blue); color: white; }
+.btn-primary:hover { background: #1448c5; }
+.btn-accent { background: var(--accent); color: white; }
+.btn-accent:hover { background: var(--accent2); }
+
+/* PAGINATION */
+.pagination {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 11px 14px; border-top: 1px solid var(--border);
+  font-family: 'DM Mono', monospace; font-size: 10px; color: var(--mist);
+}
+.page-btns { display: flex; gap: 3px; }
+.pg {
+  padding: 4px 9px; border: 1px solid var(--border2);
+  border-radius: 4px; cursor: pointer; font-size: 11px;
+  background: var(--surface); color: var(--slate);
+  font-family: 'DM Mono', monospace; transition: all 0.1s;
+}
+.pg:hover { border-color: var(--blue); color: var(--blue); }
+.pg.active { background: var(--blue); border-color: var(--blue); color: white; }
+.pg:disabled { opacity: .35; pointer-events: none; }
+
+/* STATUS BARS */
+.bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.bar-label { font-size: 11px; color: var(--slate); width: 120px; flex-shrink: 0; }
+.bar-track { flex: 1; height: 6px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 3px; transition: width 1s cubic-bezier(.16,1,.3,1); }
+.bar-val { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--ink2); width: 32px; text-align: right; flex-shrink: 0; }
+
+/* TOP DIVERG */
+.top-row { display: flex; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--surface2); }
+.top-row:last-child { border-bottom: none; }
+.top-info { flex: 1; }
+.top-info strong { display: block; font-size: 12.5px; font-weight: 500; color: var(--ink); }
+.top-info span { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--mist); }
+.top-delta { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 800; color: var(--red); margin-left: 12px; }
+
+/* UPLOAD */
+.upload-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 18px; }
+.upload-card {
+  background: var(--surface); border: 1.5px dashed var(--border2);
+  border-radius: 10px; padding: 20px; text-align: center;
+  cursor: pointer; transition: all 0.18s;
+}
+.upload-card:hover { border-color: var(--blue); background: var(--blue-bg); }
+.upload-card.loaded { border-style: solid; border-color: var(--green); background: var(--green-bg); }
+.upload-icon { font-size: 26px; margin-bottom: 8px; }
+.upload-system { font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 700; color: var(--ink); margin-bottom: 4px; }
+.upload-desc { font-size: 11px; color: var(--mist); line-height: 1.5; }
+.upload-ok { font-family: 'DM Mono', monospace; font-size: 10px; color: var(--green); margin-top: 6px; font-weight: 500; }
+
+/* SECTION */
+.sh { font-family: 'Syne', sans-serif; font-size: 19px; font-weight: 800; color: var(--ink); margin-bottom: 3px; }
+.ss { font-size: 12px; color: var(--mist); margin-bottom: 20px; }
+
+/* NOTES */
+.note-blue { background: var(--blue-bg); border: 1px solid var(--blue-border); border-radius: 7px; padding: 11px 15px; font-size: 12px; color: var(--blue); display: flex; gap: 9px; margin-bottom: 14px; }
+.note-amber { background: var(--amber-bg); border: 1px solid var(--amber-border); border-radius: 7px; padding: 11px 15px; font-size: 12px; color: var(--amber); display: flex; gap: 9px; margin-bottom: 14px; }
+
+/* FIELD ROWS */
+.field-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.field-label { font-size: 12px; color: var(--slate); width: 130px; flex-shrink: 0; }
+.field-val { flex: 1; padding: 6px 10px; background: var(--surface2); border: 1px solid var(--border); border-radius: 5px; font-size: 11px; font-family: 'DM Mono', monospace; color: var(--ink2); }
+
+/* PIE CHART */
+.pie-container { display: flex; align-items: center; gap: 24px; }
+.pie-legend { display: flex; flex-direction: column; gap: 10px; }
+.legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--slate); }
+.legend-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+.legend-val { font-family: 'DM Mono', monospace; font-size: 11px; font-weight: 500; color: var(--ink2); margin-left: auto; padding-left: 16px; }
+
+/* EMPTY */
+.empty { text-align: center; padding: 50px 20px; }
+.empty-ico { font-size: 34px; margin-bottom: 10px; }
+.empty-t { font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 700; color: var(--slate); margin-bottom: 5px; }
+.empty-s { font-size: 12px; color: var(--ghost); margin-bottom: 18px; }
+
+/* ANIM */
+@keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+.fu { animation: fadeUp 0.35s cubic-bezier(.16,1,.3,1) both; }
+.fu:nth-child(1) { animation-delay: 0ms; }
+.fu:nth-child(2) { animation-delay: 50ms; }
+.fu:nth-child(3) { animation-delay: 100ms; }
+.fu:nth-child(4) { animation-delay: 150ms; }
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+@media (max-width: 900px) {
+  .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+  .sidebar { display: none; }
+  .upload-grid { grid-template-columns: 1fr; }
+}
+
+/* ── ADVANCED FILTER BAR ── */
+.adv-filter-bar {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 14px;
+  margin-bottom: 14px; flex-wrap: wrap;
+  box-shadow: var(--shadow-sm);
+}
+.aff-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px; font-weight: 500;
+  color: var(--mist); text-transform: uppercase;
+  letter-spacing: 0.8px; white-space: nowrap;
+  flex-shrink: 0;
+}
+.aff-select {
+  padding: 7px 10px;
+  background: var(--surface2); border: 1px solid var(--border2);
+  border-radius: 6px; color: var(--ink2); font-size: 12px;
+  font-family: 'Instrument Sans', sans-serif; outline: none;
+  cursor: pointer; flex-shrink: 0;
+  transition: border-color 0.15s;
+}
+.aff-select:focus { border-color: var(--blue); }
+.aff-input-wrap {
+  position: relative; flex: 1; min-width: 180px;
+  display: flex; align-items: center;
+}
+.aff-icon {
+  position: absolute; left: 10px;
+  color: var(--ghost); font-size: 13px; pointer-events: none;
+}
+.aff-input {
+  width: 100%; padding: 7px 32px 7px 32px;
+  background: var(--surface); border: 1.5px solid var(--border2);
+  border-radius: 6px; color: var(--ink); font-size: 13px;
+  font-family: 'Instrument Sans', sans-serif;
+  outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+}
+.aff-input:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(26,92,229,0.1);
+}
+.aff-clear {
+  position: absolute; right: 8px;
+  background: none; border: none; cursor: pointer;
+  color: var(--ghost); font-size: 12px; padding: 2px 4px;
+  border-radius: 3px; line-height: 1;
+  transition: color 0.1s, background 0.1s;
+}
+.aff-clear:hover { color: var(--red); background: var(--red-bg); }
+.aff-divider {
+  width: 1px; height: 28px;
+  background: var(--border); flex-shrink: 0;
+}
+.filter-active-badge {
+  background: var(--blue-bg); color: var(--blue);
+  border: 1px solid var(--blue-border);
+  font-family: 'DM Mono', monospace;
+  font-size: 9px; font-weight: 500;
+  padding: 3px 8px; border-radius: 4px;
+  letter-spacing: 0.3px; text-transform: uppercase;
+  white-space: nowrap;
+}
+.count-badge {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px; color: var(--slate);
+  white-space: nowrap;
+}
+
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="logo">
+    <div class="logo-mark">S</div>
+    StockSync
+  </div>
+  <div class="header-meta">
+    <div class="filial-badge">98 · SAMPA — FULL</div>
+    <div class="sync-info">
+      <span id="syncTime">19/03/2026</span>
+      <span class="dot-live"></span>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="sidebar">
+    <div class="nav-section">
+      <div class="nav-label">Visão Geral</div>
+      <div class="nav-item active" id="nav-dashboard" onclick="go('dashboard',this)">
+        <span class="nav-icon">▣</span> Dashboard
+      </div>
+      <div class="nav-item" id="nav-conciliacao" onclick="go('conciliacao',this)">
+        <span class="nav-icon">⇄</span> Conciliação
+        <span class="nav-badge nb-red" id="nb-div">0</span>
+      </div>
+      <div class="nav-item" id="nav-erp" onclick="go('erp',this)">
+        <span class="nav-icon">□</span> Só no ERP
+        <span class="nav-badge nb-purple" id="nb-erp">0</span>
+      </div>
+      <div class="nav-item" id="nav-ml" onclick="go('ml',this)">
+        <span class="nav-icon">◈</span> Só no MeLi
+        <span class="nav-badge nb-amber" id="nb-ml">0</span>
+      </div>
+    </div>
+    <div class="nav-divider"></div>
+    <div class="nav-section">
+      <div class="nav-label">Importação</div>
+      <div class="nav-item" id="nav-import-space" onclick="go('import-space',this)">
+        <span class="nav-icon">↑</span> Importar Space
+      </div>
+      <div class="nav-item" id="nav-import-vtex" onclick="go('import-vtex',this)">
+        <span class="nav-icon">↑</span> Importar Vtex
+      </div>
+      <div class="nav-item" id="nav-import-meli" onclick="go('import-meli',this)">
+        <span class="nav-icon">↑</span> Importar MeLi
+      </div>
+    </div>
+    <div class="nav-divider"></div>
+    <div class="nav-section">
+      <div class="nav-label">Monitoramento</div>
+      <div class="nav-item" id="nav-devolucoes" onclick="go('devolucoes',this)">
+        <span class="nav-icon">↩</span> Devoluções
+      </div>
+    </div>
+  </nav>
+  <main class="main" id="main"></main>
+</div>
+
+<script>
+// ── DATA ──────────────────────────────────────────────────────────────────────
+const REAL_DATA = [{"sku":"252788","cod_produto":"69791","nome_sku":"Bkmtcs 41","size":"41","produto":"Tênis Masculino Under Armour Charged Beat Treino E Corrida Bkmtcs Lisa 41 Br","marca":"UNDER ARMOUR","departamento":"ESPORTIVO","mlb":"MLB4508027801","statusAnuncio":"nan","vendas30d":0,"entradaPendente":0,"aptasVenda":3,"naoAptas":0,"estoque_erp":3,"diff":0,"status":"ok"},{"sku":"277840","cod_produto":"75322","nome_sku":"Maritm 39","size":"39","produto":"Tênis Feminino Olympikus Bruma Azul Alta Performance Treino Maritm Lisa 39,0 Br","marca":"OLYMPIKUS","departamento":"ESPORTIVO","mlb":"MLB6362157560","statusAnuncio":"Ativo","vendas30d":0,"entradaPendente":0,"aptasVenda":2,"naoAptas":0,"estoque_erp":2,"diff":0,"status":"ok"},{"sku":"243825","cod_produto":"67992","nome_sku":"Marino 40","size":"40","produto":"Tênis Masculino Mizuno Cool Ride 3 Azul Corrida E Conforto Marino Lisa 40 Br","marca":"MIZUNO","departamento":"ESPORTIVO","mlb":"MLB6369755504","statusAnuncio":"Ativo","vendas30d":0,"entradaPendente":0,"aptasVenda":3,"naoAptas":0,"estoque_erp":3,"diff":0,"status":"ok"},{"sku":"277902","cod_produto":"75368","nome_sku":"Pto/Pt 40","size":"40","produto":"Tênis Masculino Olympikus Voa 3 Corrida Super Confortável Pto/pt Lisa 40 Br","marca":"OLYMPIKUS","departamento":"ESPORTIVO","mlb":"MLB4492411977","statusAnuncio":"Ativo","vendas30d":0,"entradaPendente":0,"aptasVenda":3,"naoAptas":0,"estoque_erp":3,"diff":0,"status":"ok"},{"sku":"282604","cod_produto":"76421","nome_sku":"Bkmtcs 41","size":"41","produto":"Tenis Masculino Under Armour Wing 2 Corrida Treino Caminhada Bkmtcs Lisa 41 Br","marca":"UNDER ARMOUR","departamento":"ESPORTIVO","mlb":"MLB6367911328","statusAnuncio":"nan","vendas30d":0,"entradaPendente":0,"aptasVenda":3,"naoAptas":0,"estoque_erp":3,"diff":0,"status":"ok"},{"sku":"34533042","cod_produto":"345330","nome_sku":"Pinhao 42","size":"42","produto":"Sapatênis Pegada Gold Masculino Couro Pinhão Liso 42 Br","marca":"PEGADA","departamento":"MASCULINO","mlb":"MLB4463236655","statusAnuncio":"nan","vendas30d":0,"entradaPendente":0,"aptasVenda":0,"naoAptas":0,"estoque_erp":2,"diff":-2,"status":"diverge-neg"},{"sku":"251045","cod_produto":"69554","nome_sku":"Black-Black-Silver 37","size":"37","produto":"Tênis Feminino Puma Carina 3.0 Sd Bdp Moda Tendência Sp","marca":"PUMA","departamento":"ESPORTIVO","mlb":"MLB4143277425","statusAnuncio":"Ativo","vendas30d":3,"entradaPendente":0,"aptasVenda":2,"naoAptas":0,"estoque_erp":1,"diff":1,"status":"diverge-pos"},{"sku":"64701","cod_produto":"4819","nome_sku":"Arenit 37","size":"37","produto":"Tênis Olympikus Acqua Feminino Bege Corrida Leve Confortável","marca":"OLYMPIKUS","departamento":"ESPORTIVO","mlb":"MLB5456856324","statusAnuncio":"Ativo","vendas30d":23,"entradaPendente":6,"aptasVenda":23,"naoAptas":0,"estoque_erp":17,"diff":6,"status":"diverge-pos"},{"sku":"64702","cod_produto":"4819","nome_sku":"Arenit 38","size":"38","produto":"Tênis Olympikus Acqua Feminino Bege Corrida Leve Confortável","marca":"OLYMPIKUS","departamento":"ESPORTIVO","mlb":"MLB5456856324","statusAnuncio":"Ativo","vendas30d":19,"entradaPendente":102,"aptasVenda":112,"naoAptas":0,"estoque_erp":12,"diff":100,"status":"diverge-pos"},{"sku":"35913941","cod_produto":"359139","nome_sku":"Pt/Drd 41","size":"41","produto":"Tênis Olympikus Marte Preto Liso 41 Br","marca":"OLYMPIKUS","departamento":"ESPORTIVO","mlb":"MLB6187000602","statusAnuncio":"nan","vendas30d":19,"entradaPendente":110,"aptasVenda":110,"naoAptas":0,"estoque_erp":10,"diff":100,"status":"diverge-pos"},{"sku":"64619","cod_produto":"4800","nome_sku":"Pto/Pk 36","size":"36","produto":"Tênis Running Feminino Olympikus Apolis Preto Sp","marca":"OLYMPIKUS","departamento":"FEMININO","mlb":"MLB4027528059","statusAnuncio":"nan","vendas30d":3,"entradaPendente":100,"aptasVenda":100,"naoAptas":0,"estoque_erp":0,"diff":100,"status":"diverge-pos"},{"sku":"35913942","cod_produto":"359139","nome_sku":"Pt/Drd 42","size":"42","produto":"Tênis Olympikus Marte Preto Liso 42 Br","marca":"OLYMPIKUS","departamento":"ESPORTIVO","mlb":"MLB6186988458","statusAnuncio":"nan","vendas30d":10,"entradaPendente":100,"aptasVenda":100,"naoAptas":0,"estoque_erp":1,"diff":99,"status":"diverge-pos"},{"sku":"35913939","cod_produto":"359139","nome_sku":"Pt/Drd 39","size":"39","produto":"Tênis Olympikus Marte Preto Liso 39 Br","marca":"OLYMPIKUS","departamento":"ESPORTIVO","mlb":"MLB4434459237","statusAnuncio":"nan","vendas30d":3,"entradaPendente":100,"aptasVenda":100,"naoAptas":0,"estoque_erp":3,"diff":97,"status":"diverge-pos"},{"sku":"233544","cod_produto":"66401","nome_sku":"Mrhcur  41","size":"41","produto":"Tênis Running Masulino  Olympikus Sagaz Azul Sp","marca":"OLYMPIKUS","departamento":"ESPORTIVO","mlb":"MLB5521626540","statusAnuncio":"Ativo","vendas30d":1,"entradaPendente":0,"aptasVenda":8,"naoAptas":0,"estoque_erp":2,"diff":6,"status":"diverge-pos"},{"sku":"252119","cod_produto":"69725","nome_sku":"Chborg 37","size":"37","produto":"Tênis Olympikus Acqua Feminino Confortável Leve E Versátil","marca":"OLYMPIKUS","departamento":"ESPORTIVO","mlb":"MLB4136541887","statusAnuncio":"Ativo","vendas30d":0,"entradaPendente":0,"aptasVenda":41,"naoAptas":0,"estoque_erp":39,"diff":2,"status":"diverge-pos"},{"sku":"151591","cod_produto":"63716","nome_sku":"Preto 37","size":"37","produto":"Tênis Olympikus Acqua Feminino Preto Corrida Academia Leve","marca":"OLYMPIKUS","departamento":"ESPORTIVO","mlb":"MLB4091910503","statusAnuncio":"Ativo","vendas30d":19,"entradaPendente":0,"aptasVenda":51,"naoAptas":0,"estoque_erp":50,"diff":1,"status":"diverge-pos"},{"sku":"151589","cod_produto":"63716","nome_sku":"Preto 36","size":"36","produto":"Tênis Olympikus Acqua Feminino Preto Corrida Academia Leve","marca":"OLYMPIKUS","departamento":"ESPORTIVO","mlb":"MLB4091910503","statusAnuncio":"Ativo","vendas30d":16,"entradaPendente":6,"aptasVenda":52,"naoAptas":0,"estoque_erp":50,"diff":2,"status":"diverge-pos"},{"sku":"64617","cod_produto":"4800","nome_sku":"Pto/Pk 34","size":"34","produto":"Tênis Running Feminino Olympikus Apolis Preto Sp","marca":"OLYMPIKUS","departamento":"FEMININO","mlb":"MLB4027528059","statusAnuncio":"nan","vendas30d":0,"entradaPendente":0,"aptasVenda":0,"naoAptas":0,"estoque_erp":6,"diff":-6,"status":"diverge-neg"},{"sku":"282591","cod_produto":"","nome_sku":"","size":"","produto":"Tenis Feminino Under Armour Slight3 Se Leve Academia Corrida Ststmp Lisa 39,0 Br","marca":"","departamento":"","mlb":"MLB4508568779","statusAnuncio":"nan","vendas30d":0,"entradaPendente":0,"aptasVenda":2,"naoAptas":0,"estoque_erp":null,"diff":null,"status":"only-ml"},{"sku":"264889","cod_produto":"","nome_sku":"","size":"","produto":"Tenis Feminino Under Armour Charged Quicker 2 Corrida Treino Swswtu Lisa 39,0 Br","marca":"","departamento":"","mlb":"MLB4516598227","statusAnuncio":"nan","vendas30d":0,"entradaPendente":0,"aptasVenda":2,"naoAptas":0,"estoque_erp":null,"diff":null,"status":"only-ml"},{"sku":"282597","cod_produto":"","nome_sku":"","size":"","produto":"Tenis Feminino Under Armour Slight3 Se Leve Academia Corrida Ststmp Lisa 37,0 Br","marca":"","departamento":"","mlb":"MLB4508581493","statusAnuncio":"nan","vendas30d":0,"entradaPendente":0,"aptasVenda":3,"naoAptas":0,"estoque_erp":null,"diff":null,"status":"only-ml"},{"sku":"69324","cod_produto":"69324","nome_sku":"","size":"","produto":"TENIS RUNNING MASC MIZUNO NEO VISTA 2 102328001-","marca":"MIZUNO","departamento":"ESPORTIVO","mlb":"","statusAnuncio":"","vendas30d":0,"entradaPendente":0,"aptasVenda":null,"naoAptas":0,"estoque_erp":6,"diff":null,"status":"only-erp"},{"sku":"69539","cod_produto":"69539","nome_sku":"","size":"","produto":"TENIS CASUAL MASC PUMA SHUFFLE DOWNTOWN 402596-05","marca":"PUMA","departamento":"ESPORTIVO","mlb":"","statusAnuncio":"","vendas30d":0,"entradaPendente":0,"aptasVenda":null,"naoAptas":0,"estoque_erp":9,"diff":null,"status":"only-erp"},{"sku":"70035","cod_produto":"70035","nome_sku":"","size":"","produto":"TENIS RUNNING FEM SKECHERS GO WALK FLEX - GRAND ENTRY 124836-","marca":"SKECHERS","departamento":"ESPORTIVO","mlb":"","statusAnuncio":"","vendas30d":0,"entradaPendente":0,"aptasVenda":null,"naoAptas":0,"estoque_erp":10,"diff":null,"status":"only-erp"},{"sku":"73347","cod_produto":"73347","nome_sku":"","size":"","produto":"SAPATENIS MASC DEMOCRATA 623101-001","marca":"DEMOCRATA","departamento":"MASCULINO","mlb":"","statusAnuncio":"","vendas30d":0,"entradaPendente":0,"aptasVenda":null,"naoAptas":0,"estoque_erp":11,"diff":null,"status":"only-erp"},{"sku":"73348","cod_produto":"73348","nome_sku":"","size":"","produto":"SAPATENIS MASC DEMOCRATA 240501-006","marca":"DEMOCRATA","departamento":"MASCULINO","mlb":"","statusAnuncio":"","vendas30d":0,"entradaPendente":0,"aptasVenda":null,"naoAptas":0,"estoque_erp":24,"diff":null,"status":"only-erp"},{"sku":"75325","cod_produto":"75325","nome_sku":"","size":"","produto":"TENIS RUNNING MASC OLYMPIKUS SAGAZ 43588382-","marca":"OLYMPIKUS","departamento":"ESPORTIVO","mlb":"","statusAnuncio":"","vendas30d":0,"entradaPendente":0,"aptasVenda":null,"naoAptas":0,"estoque_erp":17,"diff":null,"status":"only-erp"},{"sku":"76418","cod_produto":"76418","nome_sku":"","size":"","produto":"TENIS RUNNING MASC UNDER ARMOUR SKYLINE 5 6014736-001","marca":"UNDER ARMOUR","departamento":"ESPORTIVO","mlb":"","statusAnuncio":"","vendas30d":0,"entradaPendente":0,"aptasVenda":null,"naoAptas":0,"estoque_erp":15,"diff":null,"status":"only-erp"}];
+
+const S = {
+  data: REAL_DATA,
+  erpLoaded: true, vtexLoaded: true, meliLoaded: true,
+  erpData: null, meliData: null, vtexMap: {},
+  view: 'dashboard',
+  search: '', searchField: 'sku', searchMode: 'contains',
+  statusFilter: 'all', page: 1, perPage: 50
+};
+
+// ── STATS ─────────────────────────────────────────────────────────────────────
+function calcStats(data) {
+  return data.reduce((s,r) => {
+    s.total++;
+    if (r.status==='ok') s.ok++;
+    else if (r.status==='diverge-neg') s.neg++;
+    else if (r.status==='diverge-pos') s.pos++;
+    else if (r.status==='only-erp') s.onlyErp++;
+    else if (r.status==='only-ml') s.onlyMl++;
+    s.erpTotal += r.estoque_erp||0;
+    s.mlTotal  += r.aptasVenda||0;
+    s.pendente += r.entradaPendente||0;
+    return s;
+  }, {total:0,ok:0,neg:0,pos:0,onlyErp:0,onlyMl:0,erpTotal:0,mlTotal:0,pendente:0});
+}
+
+function updateBadges() {
+  const st = calcStats(S.data);
+  document.getElementById('nb-div').textContent  = st.neg + st.pos;
+  document.getElementById('nb-erp').textContent  = st.onlyErp;
+  document.getElementById('nb-ml').textContent   = st.onlyMl;
+}
+
+// ── NAVIGATION ────────────────────────────────────────────────────────────────
+function go(view, el) {
+  S.view = view; S.page = 1;
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  (el || document.getElementById('nav-'+view))?.classList.add('active');
+  render();
+}
+
+// ── CHIPS & DIFF ──────────────────────────────────────────────────────────────
+function chip(st) {
+  const m = {
+    'ok':          ['c-ok',  '✓ OK'],
+    'diverge-neg': ['c-neg', '↓ A menos'],
+    'diverge-pos': ['c-pos', '↑ A mais'],
+    'only-erp':    ['c-erp', 'Só ERP'],
+    'only-ml':     ['c-ml',  'Só MeLi'],
+  };
+  const [c,l] = m[st]||['','?'];
+  return `<span class="chip ${c}">${l}</span>`;
+}
+function diffCls(d) { if(d===null||d===undefined) return ''; return d<0?'t-neg':d>0?'t-pos':'t-ok'; }
+function fmtD(d) { if(d===null||d===undefined) return '—'; return (d>0?'+':'')+d; }
+
+// ── RENDER ────────────────────────────────────────────────────────────────────
+function render() {
+  const v = S.view;
+  if      (v==='dashboard')    renderDash();
+  else if (v==='conciliacao')  renderTable('all');
+  else if (v==='erp')          renderTable('only-erp');
+  else if (v==='ml')           renderTable('only-ml');
+  else if (v==='import-space') renderImport('space');
+  else if (v==='import-vtex')  renderImport('vtex');
+  else if (v==='import-meli')  renderImport('meli');
+  else if (v==='devolucoes')   renderDev();
+}
+
+// ── DASHBOARD ─────────────────────────────────────────────────────────────────
+function renderDash() {
+  const st = calcStats(S.data);
+  const okP = st.total ? Math.round(st.ok/st.total*100) : 0;
+  document.getElementById('main').innerHTML = `
+    <div class="sh fu">Dashboard</div>
+    <div class="ss fu">Conciliação ERP Space (Filial 98 · SAMPA FULL) × Mercado Livre Full — 19/03/2026</div>
+
+    <div class="metrics-grid">
+      <div class="metric m-blue fu">
+        <div class="metric-label">Total de SKUs</div>
+        <div class="metric-val">${st.total.toLocaleString('pt-BR')}</div>
+        <div class="metric-sub">${okP}% conciliados corretamente</div>
+      </div>
+      <div class="metric m-red fu">
+        <div class="metric-label">Divergências</div>
+        <div class="metric-val">${st.neg+st.pos}</div>
+        <div class="metric-sub">${st.neg} a menos · ${st.pos} a mais no ML</div>
+      </div>
+      <div class="metric m-amber fu">
+        <div class="metric-label">Entrada Pendente</div>
+        <div class="metric-val">${st.pendente.toLocaleString('pt-BR')}</div>
+        <div class="metric-sub">Un. a caminho do Full</div>
+      </div>
+      <div class="metric m-green fu">
+        <div class="metric-label">Estoque ERP</div>
+        <div class="metric-val">${st.erpTotal.toLocaleString('pt-BR')}</div>
+        <div class="metric-sub">ML disponível: ${st.mlTotal.toLocaleString('pt-BR')} un.</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+      <div class="card fu">
+        <div class="card-header"><div><div class="card-title">Distribuição de Status</div><div class="card-sub">Por volume de SKUs</div></div></div>
+        ${statusBars(st)}
+      </div>
+      <div class="card fu">
+        <div class="card-header"><div><div class="card-title">Top 5 Divergências Críticas</div><div class="card-sub">Maior gap ERP → ML</div></div></div>
+        ${topDiverg()}
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+      <div class="card fu">
+        <div class="card-header"><div><div class="card-title">Visão Geral — Estoque</div><div class="card-sub">Comparativo em unidades</div></div></div>
+        <div class="pie-container">
+          <canvas id="pieChart" width="190" height="190" style="flex-shrink:0"></canvas>
+          <div class="pie-legend" id="pieLegend"></div>
+        </div>
+      </div>
+      <div class="card fu">
+        <div class="card-header"><div><div class="card-title">Resumo Operacional</div><div class="card-sub">Visão rápida dos indicadores</div></div></div>
+        ${opSummary(st)}
+      </div>
+    </div>
+
+    <div class="card fu">
+      <div class="card-header">
+        <div><div class="card-title">Últimas Divergências</div><div class="card-sub">SKUs com maior gap entre ERP e ML</div></div>
+        <button class="btn btn-ghost" onclick="go('conciliacao',document.getElementById('nav-conciliacao'))">Ver tudo →</button>
+      </div>
+      ${miniTable(S.data.filter(r=>r.status==='diverge-neg'||r.status==='diverge-pos').slice(0,7))}
+    </div>
+  `;
+  setTimeout(() => drawPie(st), 50);
+}
+
+function statusBars(st) {
+  const items = [
+    ['✓ OK', st.ok, '#00a86b'],
+    ['↓ A menos no ML', st.neg, '#d42b2b'],
+    ['↑ A mais no ML', st.pos, '#1a5ce5'],
+    ['Só no ERP', st.onlyErp, '#6b48e8'],
+    ['Só no MeLi', st.onlyMl, '#c97c00'],
+  ];
+  return items.map(([l,v,c])=>`
+    <div class="bar-row">
+      <div class="bar-label">${l}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${st.total?Math.round(v/st.total*100):0}%;background:${c}"></div></div>
+      <div class="bar-val">${v}</div>
+    </div>`).join('');
+}
+
+function topDiverg() {
+  const top = S.data.filter(r=>r.status==='diverge-neg').sort((a,b)=>a.diff-b.diff).slice(0,5);
+  if (!top.length) return '<div style="color:var(--ghost);font-size:12px;padding:10px 0">Nenhuma divergência crítica</div>';
+  return top.map(r=>`
+    <div class="top-row">
+      <div class="top-info">
+        <strong>${r.produto.substring(0,40)}</strong>
+        <span>SKU ${r.sku} · ${r.marca||'—'}</span>
+      </div>
+      <div class="top-delta">${r.diff}</div>
+    </div>`).join('');
+}
+
+function opSummary(st) {
+  const rows = [
+    ['SKUs conciliados (OK)', st.ok, 'var(--green)'],
+    ['Divergência negativa (ML < ERP)', st.neg, 'var(--red)'],
+    ['Divergência positiva (ML > ERP)', st.pos, 'var(--blue)'],
+    ['Produtos sem presença no ML', st.onlyErp, 'var(--purple)'],
+    ['SKUs no ML sem ERP vinculado', st.onlyMl, 'var(--amber)'],
+    ['Unidades a caminho do Full', st.pendente, '#1e9e88'],
+  ];
+  return `<table style="width:100%;font-size:12px;border-collapse:collapse">
+    ${rows.map(([l,v,c])=>`<tr>
+      <td style="padding:7px 0;color:var(--slate);border-bottom:1px solid var(--surface2)">${l}</td>
+      <td style="text-align:right;font-family:'DM Mono',monospace;font-weight:600;color:${c};border-bottom:1px solid var(--surface2);padding:7px 0">${v.toLocaleString('pt-BR')}</td>
+    </tr>`).join('')}
+  </table>`;
+}
+
+// ── PIE CHART (vanilla canvas) ────────────────────────────────────────────────
+function drawPie(st) {
+  const canvas = document.getElementById('pieChart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const cx = 95, cy = 95, r = 78, ir = 44;
+
+  const segments = [
+    { label: 'Estoque ERP',          value: st.erpTotal,  color: '#1a5ce5' },
+    { label: 'ML Aptas p/ venda',    value: st.mlTotal,   color: '#00a86b' },
+    { label: 'Entrada Pendente',     value: st.pendente,  color: '#c97c00' },
+    { label: 'Divergências (SKUs)',  value: st.neg+st.pos,color: '#d42b2b' },
+    { label: 'Só ERP (SKUs)',        value: st.onlyErp,   color: '#6b48e8' },
+  ].filter(s => s.value > 0);
+
+  const total = segments.reduce((s,x) => s+x.value, 0);
+  if (!total) return;
+
+  let angle = -Math.PI / 2;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = 190 * dpr; canvas.height = 190 * dpr;
+  canvas.style.width = '190px'; canvas.style.height = '190px';
+  ctx.scale(dpr, dpr);
+
+  segments.forEach(seg => {
+    const sweep = (seg.value / total) * 2 * Math.PI;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, r, angle, angle + sweep);
+    ctx.closePath();
+    ctx.fillStyle = seg.color;
+    ctx.fill();
+    angle += sweep;
+  });
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, ir, 0, 2 * Math.PI);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+
+  ctx.fillStyle = '#0d1224';
+  ctx.font = 'bold 18px Syne, sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(total.toLocaleString('pt-BR'), cx, cy - 7);
+  ctx.font = '10px DM Mono, monospace';
+  ctx.fillStyle = '#8892ae';
+  ctx.fillText('total un.', cx, cy + 10);
+
+  const leg = document.getElementById('pieLegend');
+  if (leg) {
+    leg.innerHTML = segments.map(s=>`
+      <div class="legend-item">
+        <div class="legend-dot" style="background:${s.color}"></div>
+        <span>${s.label}</span>
+        <span class="legend-val">${s.value.toLocaleString('pt-BR')}</span>
+      </div>`).join('');
+  }
+}
+
+function miniTable(rows) {
+  if (!rows.length) return '<div style="text-align:center;color:var(--ghost);padding:20px;font-size:12px">Nenhum item</div>';
+  return `<div class="table-wrap"><table>
+    <thead><tr><th>SKU</th><th>Cód.Produto</th><th>Tam.</th><th>Produto</th><th style="text-align:right">ERP</th><th style="text-align:right">ML</th><th style="text-align:right">Diff</th><th>Status</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr>
+      <td class="t-mono">${r.sku}</td>
+      <td class="t-mono" style="color:var(--blue)">${r.cod_produto||'—'}</td>
+      <td class="t-mono" style="font-weight:600">${r.size||'—'}</td>
+      <td class="t-name"><span title="${r.produto}">${r.produto.substring(0,28)}</span></td>
+      <td class="t-num">${r.estoque_erp!==null?r.estoque_erp:'—'}</td>
+      <td class="t-num">${r.aptasVenda!==null?r.aptasVenda:'—'}</td>
+      <td class="${diffCls(r.diff)}">${fmtD(r.diff)}</td>
+      <td>${chip(r.status)}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+}
+
+// ── TABLE VIEW ────────────────────────────────────────────────────────────────
+function renderTable(mode) {
+  const titles = { all:'Conciliação Completa', 'only-erp':'Produtos Só no ERP', 'only-ml':'Produtos Só no MeLi' };
+  const subs   = { all:'Todos os SKUs — Space SAMPA FULL × ML', 'only-erp':'Sem mapeamento/anúncio no ML', 'only-ml':'SKUs no ML sem ERP vinculado' };
+
+  let rows = mode==='all' ? S.data : S.data.filter(r=>r.status===mode);
+
+  if (S.search.trim()) {
+    const q = S.search.trim().toLowerCase();
+    const field = S.searchField;
+    const mode_f = S.searchMode;
+    rows = rows.filter(r => {
+      let val = '';
+      if      (field==='sku')         val = (r.sku||'').toLowerCase();
+      else if (field==='cod_produto')  val = (r.cod_produto||'').toLowerCase();
+      else if (field==='produto')      val = (r.produto||'').toLowerCase();
+      else if (field==='marca')        val = (r.marca||'').toLowerCase();
+      else if (field==='mlb')          val = (r.mlb||'').toLowerCase();
+      else if (field==='size')         val = (r.size||'').toLowerCase();
+      if (mode_f==='equals')   return val === q;
+      if (mode_f==='contains') return val.includes(q);
+      if (mode_f==='starts')   return val.startsWith(q);
+      return val.includes(q);
+    });
+  }
+  if (mode==='all' && S.statusFilter!=='all') rows = rows.filter(r=>r.status===S.statusFilter);
+
+  const total = rows.length;
+  const pp = S.perPage;
+  const pageRows = rows.slice((S.page-1)*pp, S.page*pp);
+  const totalPages = Math.max(1, Math.ceil(total/pp));
+  const showERP = mode!=='only-ml', showML = mode!=='only-erp', showDiff = mode==='all';
+
+  const fieldOpts = [
+    ['sku','SKU'],['cod_produto','Cód. Produto'],['produto','Produto'],
+    ['marca','Marca'],['mlb','MLB'],['size','Tamanho']
+  ];
+  const modeOpts = [
+    ['contains','que contenha'],['equals','igual a'],['starts','começa com']
+  ];
+
+  document.getElementById('main').innerHTML = `
+    <div class="sh fu">${titles[mode]||'Tabela'}</div>
+    <div class="ss fu">${subs[mode]||''}</div>
+
+    <div class="adv-filter-bar fu">
+      <div class="aff-label">Filtrar por</div>
+      <select class="aff-select" id="sf-field" onchange="S.searchField=this.value;S.page=1;renderTable('${mode}')">
+        ${fieldOpts.map(([v,l])=>`<option value="${v}" ${S.searchField===v?'selected':''}>${l}</option>`).join('')}
+      </select>
+      <select class="aff-select" id="sf-mode" onchange="S.searchMode=this.value;S.page=1;renderTable('${mode}')">
+        ${modeOpts.map(([v,l])=>`<option value="${v}" ${S.searchMode===v?'selected':''}>${l}</option>`).join('')}
+      </select>
+      <div class="aff-input-wrap">
+        <span class="aff-icon">⌕</span>
+        <input type="text" id="sq" class="aff-input"
+          placeholder="Digite o valor..."
+          value="${S.search.replace(/"/g,'&quot;')}"
+          oninput="S.search=this.value;S.page=1;renderTable('${mode}')">
+        ${S.search?`<button class="aff-clear" onclick="S.search='';S.page=1;renderTable('${mode}')">✕</button>`:''}
+      </div>
+      ${mode==='all'?`
+      <div class="aff-divider"></div>
+      <select class="aff-select" onchange="S.statusFilter=this.value;S.page=1;renderTable('all')">
+        <option value="all" ${S.statusFilter==='all'?'selected':''}>Todos os status</option>
+        <option value="diverge-neg" ${S.statusFilter==='diverge-neg'?'selected':''}>↓ A menos no ML</option>
+        <option value="diverge-pos" ${S.statusFilter==='diverge-pos'?'selected':''}>↑ A mais no ML</option>
+        <option value="ok" ${S.statusFilter==='ok'?'selected':''}>✓ OK</option>
+        <option value="only-erp" ${S.statusFilter==='only-erp'?'selected':''}>Só ERP</option>
+        <option value="only-ml" ${S.statusFilter==='only-ml'?'selected':''}>Só MeLi</option>
+      </select>`:''}
+      <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+        ${S.search?`<span class="filter-active-badge">Filtro ativo</span>`:''}
+        <button class="btn btn-ghost" onclick="exportCSV('${mode}')">⬇ CSV</button>
+        <span class="count-badge">${total} itens</span>
+      </div>
+    </div>
+
+    <div class="card" style="padding:0">
+      <div class="table-wrap" style="border:none">
+        <table>
+          <thead><tr>
+            <th>SKU</th><th>Cód. Produto</th><th>Tamanho</th><th>Produto</th><th>Marca</th>
+            ${showERP?'<th style="text-align:right">ERP</th>':''}
+            ${showML?'<th style="text-align:right">ML Aptas</th><th style="text-align:right">Pendente</th>':''}
+            ${showDiff?'<th style="text-align:right">Diferença</th>':''}
+            <th>Status</th>
+            ${showML?'<th>MLB</th>':''}
+          </tr></thead>
+          <tbody>${pageRows.length ? pageRows.map(r=>`<tr>
+            <td class="t-mono">${r.sku}</td>
+            <td class="t-mono" style="color:var(--blue)">${r.cod_produto||'—'}</td>
+            <td class="t-mono" style="font-weight:600;color:var(--ink2)">${r.size||r.nome_sku||'—'}</td>
+            <td class="t-name"><span title="${r.produto}">${r.produto.substring(0,34)}</span></td>
+            <td style="font-size:11px;color:var(--mist)">${r.marca||'—'}</td>
+            ${showERP?`<td class="t-num">${r.estoque_erp!==null?r.estoque_erp:'—'}</td>`:''}
+            ${showML?`<td class="t-num">${r.aptasVenda!==null?r.aptasVenda:'—'}</td><td class="t-num" style="color:var(--amber)">${r.entradaPendente||0}</td>`:''}
+            ${showDiff?`<td class="${diffCls(r.diff)}">${fmtD(r.diff)}</td>`:''}
+            <td>${chip(r.status)}</td>
+            ${showML?`<td class="t-mono" style="font-size:10px;color:var(--blue)">${r.mlb||'—'}</td>`:''}
+          </tr>`).join('') : '<tr><td colspan="11" style="text-align:center;padding:32px;color:var(--ghost);font-size:12px">Nenhum item encontrado</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+      <div class="pagination">
+        <span>${(S.page-1)*pp+1}–${Math.min(S.page*pp,total)} de ${total}</span>
+        <div class="page-btns">
+          <button class="pg" onclick="pg(${S.page-1},'${mode}')" ${S.page<=1?'disabled':''}>‹</button>
+          ${Array.from({length:Math.min(totalPages,7)},(_,i)=>i+1).map(p=>`<button class="pg ${p===S.page?'active':''}" onclick="pg(${p},'${mode}')">${p}</button>`).join('')}
+          ${totalPages>7?`<span style="color:var(--ghost);padding:0 3px;font-size:11px">…</span><button class="pg ${totalPages===S.page?'active':''}" onclick="pg(${totalPages},'${mode}')">${totalPages}</button>`:''}
+          <button class="pg" onclick="pg(${S.page+1},'${mode}')" ${S.page>=totalPages?'disabled':''}>›</button>
+        </div>
+      </div>
+    </div>`;
+
+  const sq = document.getElementById('sq');
+  if (sq) { sq.focus(); sq.setSelectionRange(sq.value.length, sq.value.length); }
+}
+
+function pg(p, mode) {
+  const max = Math.ceil(S.data.length / S.perPage);
+  S.page = Math.max(1, Math.min(p, max));
+  renderTable(mode);
+}
+
+// ── IMPORT VIEWS ──────────────────────────────────────────────────────────────
+function renderImport(src) {
+  const cfg = {
+    space: {
+      title: 'Importar Space ERP',
+      sub: 'Planilha EXPORTA_VENDAS_E_ESTOQUE do sistema Space',
+      icon: '📦', color: 'var(--purple)',
+      fields: [
+        ['Chave SKU', 'CODPRODUTO — Coluna F'],
+        ['Estoque', 'ESTOQUE — Coluna N'],
+        ['Produto', 'PRODUTO — Coluna I'],
+        ['Filial', 'FILIAL — Coluna A'],
+        ['Filtrar por', '98 - SAMPA - FULL'],
+        ['Separador', 'Ponto e vírgula (;)'],
+        ['Encoding', 'Latin-1 / ISO-8859-1'],
+      ],
+      accept: '.xlsx,.csv,.txt',
+      note: 'O sistema filtra automaticamente os registros da filial 98 - SAMPA - FULL. O CODPRODUTO é a chave que conecta ao mapeamento VTEX.'
+    },
+    vtex: {
+      title: 'Importar VTEX',
+      sub: 'Planilha de catálogo VTEX — ponte entre Space e ML',
+      icon: '🔗', color: 'var(--blue)',
+      fields: [
+        ['Header', 'Linha 2 (índice 1)'],
+        ['Col V (idx 21)', '"Cód. referência do produto" → CODPRODUTO Space'],
+        ['Col AC (idx 28)', '"Cód. referência do SKU" → SKU do ML'],
+        ['Formato', '.xlsx'],
+      ],
+      accept: '.xlsx',
+      note: 'Arquivo de catálogo exportado do painel VTEX. A coluna V aponta para o código do produto no Space e a coluna AC aponta para o SKU no Mercado Livre.'
+    },
+    meli: {
+      title: 'Importar MeLi Full',
+      sub: 'Relatório Geral de Estoque Full do painel do vendedor',
+      icon: '🛒', color: 'var(--accent)',
+      fields: [
+        ['Aba', 'Resumo'],
+        ['Header', 'Linha 10 (pular 9 linhas)'],
+        ['Col D — SKU', 'Código do SKU = chave de ligação com VTEX col AC'],
+        ['Col Q — Aptas', '"Aptas para venda" = estoque disponível'],
+        ['Col N — Pendente', '"Entrada pendente" = em trânsito'],
+        ['Col R — Não aptas', '"Não aptas para venda"'],
+        ['Formato', '.xlsx'],
+      ],
+      accept: '.xlsx',
+      note: 'Acesse Mercado Livre → Estoque Full → Baixar relatório geral. O arquivo stock_general_full_XXXXX.xlsx é o correto.'
+    }
+  };
+  const c = cfg[src];
+  const loaded = src==='space' ? S.erpLoaded : src==='vtex' ? S.vtexLoaded : S.meliLoaded;
+
+  document.getElementById('main').innerHTML = `
+    <div class="sh fu">${c.title}</div>
+    <div class="ss fu">${c.sub}</div>
+    <div class="note-blue fu"><span>ℹ</span><div>${c.note}</div></div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
+      <div class="card fu" style="border-top:3px solid ${c.color}">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+          <span style="font-size:26px">${c.icon}</span>
+          <div>
+            <div style="font-family:'Syne',sans-serif;font-size:14px;font-weight:700;color:var(--ink)">${c.title.replace('Importar ','')}</div>
+            <div style="font-size:11px;color:var(--mist)">Formatos aceitos: ${c.accept}</div>
+          </div>
+        </div>
+        <div id="dz-${src}"
+          onclick="document.getElementById('fi-${src}').click()"
+          ondragover="event.preventDefault();this.style.borderColor='var(--blue)'"
+          ondragleave="this.style.borderColor=''"
+          ondrop="hDrop(event,'${src}')"
+          style="border:1.5px dashed var(--border2);border-radius:8px;padding:26px;text-align:center;cursor:pointer;transition:all 0.2s;${loaded?'border-color:var(--green);background:var(--green-bg);border-style:solid':''}"
+        >
+          <div style="font-size:22px;margin-bottom:6px">${loaded?'✅':'📂'}</div>
+          <div style="font-size:13px;color:var(--slate)">${loaded?'Arquivo carregado':'Clique ou arraste o arquivo aqui'}</div>
+          ${loaded?`<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--green);margin-top:5px;font-weight:500">Dados carregados com sucesso</div>`:`<div style="font-size:11px;color:var(--ghost);margin-top:3px">Formatos: ${c.accept}</div>`}
+        </div>
+        <input type="file" id="fi-${src}" accept="${c.accept}" style="display:none" onchange="hFile(event,'${src}')">
+        <div id="st-${src}" style="margin-top:8px;font-size:11px;color:var(--mist)"></div>
+      </div>
+
+      <div class="card fu">
+        <div class="card-title" style="margin-bottom:12px">Mapeamento de Colunas</div>
+        ${c.fields.map(([l,v])=>`
+          <div class="field-row">
+            <div class="field-label">${l}</div>
+            <div class="field-val">${v}</div>
+          </div>`).join('')}
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-accent" onclick="procAll()">⟳ Processar e Conciliar</button>
+      <button class="btn btn-ghost" onclick="go('dashboard',document.getElementById('nav-dashboard'))">← Voltar</button>
+    </div>`;
+}
+
+function hDrop(e,src) { e.preventDefault(); const f=e.dataTransfer.files[0]; if(f) procFile(f,src); }
+function hFile(e,src) { const f=e.target.files[0]; if(f) procFile(f,src); }
+
+function procFile(file, src) {
+  const st = document.getElementById('st-'+src);
+  if(st) st.textContent = 'Lendo '+file.name+'...';
+  const ext = file.name.split('.').pop().toLowerCase();
+  const r = new FileReader();
+  r.onload = e => {
+    try {
+      if (ext==='xlsx'||ext==='xls') {
+        const wb = XLSX.read(e.target.result, {type:'array'});
+        if (src==='meli') parseMeli(wb,file.name);
+        else if (src==='vtex') parseVtex(wb,file.name);
+        else parseSpaceXlsx(wb,file.name);
+      } else { parseSpaceCSV(e.target.result,file.name); }
+    } catch(err) { if(st) st.textContent='Erro: '+err.message; }
+  };
+  if (ext==='xlsx'||ext==='xls') r.readAsArrayBuffer(file); else r.readAsText(file,'latin1');
+}
+
+function parseMeli(wb, fn) {
+  const sn = wb.SheetNames.includes('Resumo') ? 'Resumo' : wb.SheetNames[0];
+  const raw = XLSX.utils.sheet_to_json(wb.Sheets[sn], {header:1,defval:''});
+  const d = [];
+  for(let i=12;i<raw.length;i++){
+    const row=raw[i]; const sku=String(row[3]||'').trim();
+    if(!sku||sku==='nan') continue;
+    let mlb=String(row[4]||'');
+    d.push({sku,codigoML:String(row[1]||''),mlb,produto:String(row[6]||''),statusAnuncio:String(row[9]||''),
+      vendas30d:Number(row[11])||0,entradaPendente:Number(row[13])||0,aptasVenda:Number(row[21])||0,naoAptas:Number(row[17])||0});
+  }
+  S.meliData=d; S.meliLoaded=true;
+  alert(`✓ ML Full: ${d.length} SKUs de "${fn}"`);
+  tryMerge(); renderImport('meli');
+}
+
+function parseVtex(wb, fn) {
+  const raw = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1,defval:''});
+  const m = {};
+  function xSize(nome) {
+    if(!nome) return '';
+    const s=String(nome);
+    const d=s.match(/(\d{2}),\d/); if(d) return d[1];
+    const ns=[...s.matchAll(/(\d{2,3})/g)].map(x=>x[1]).filter(n=>parseInt(n)>=24&&parseInt(n)<=50);
+    if(ns.length) return ns[ns.length-1].slice(-2);
+    const all=s.match(/\d+/g); if(all){const l=all[all.length-1];return l.length>=2?l.slice(-2):l;}
+    return '';
+  }
+  for(let i=2;i<raw.length;i++){
+    const r=raw[i];
+    const cod=String(r[21]||'').trim();
+    const nomesku=String(r[24]||'').trim();
+    const sku=String(r[28]||'').trim();
+    if(cod&&sku) m[sku]={cod_produto:cod,nome_sku:nomesku,size:xSize(nomesku)};
+  }
+  S.vtexMap=m; S.vtexLoaded=true;
+  alert(`✓ VTEX: ${Object.keys(m).length} mapeamentos de "${fn}"`);
+  renderImport('vtex');
+}
+
+function parseSpaceXlsx(wb, fn) {
+  const raw = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1,defval:''});
+  let hi=-1;
+  for(let i=0;i<Math.min(5,raw.length);i++){
+    if(raw[i].some(c=>String(c).toUpperCase().includes('CODPRODUTO'))) {hi=i;break;}
+  }
+  if(hi<0){alert('Cabeçalho não encontrado');return;}
+  const h=raw[hi].map(c=>String(c).toUpperCase().trim());
+  const iS=h.findIndex(c=>c.includes('CODPRODUTO')), iE=h.findIndex(c=>c==='ESTOQUE');
+  const iP=h.findIndex(c=>c==='PRODUTO'), iM=h.findIndex(c=>c==='MARCA');
+  const iF=h.findIndex(c=>c==='FILIAL'), iD=h.findIndex(c=>c.includes('DEPARTAMENTO'));
+  const iT=h.findIndex(c=>c==='TAM'||c==='TAMANHO');
+  const rows=[];
+  for(let i=hi+1;i<raw.length;i++){
+    const r=raw[i];
+    if(iF>=0 && !String(r[iF]).includes('98')) continue;
+    const sku=String(r[iS]||'').trim(); if(!sku) continue;
+    const tam=iT>=0?String(r[iT]||'').trim():'';
+    rows.push({sku,tam,produto:String(r[iP]||''),marca:String(r[iM]||''),departamento:String(r[iD]||''),estoque:Number(r[iE])||0});
+  }
+  S.erpData=rows; S.erpLoaded=true;
+  alert(`✓ Space: ${rows.length} linhas (${[...new Set(rows.map(r=>r.sku))].length} SKUs) de "${fn}" (Filial 98)`);
+  tryMerge(); renderImport('space');
+}
+
+function parseSpaceCSV(text, fn) {
+  const lines = text.replace(/"""/g,'"').split('\n').filter(l=>l.trim());
+  const rows=[];
+  lines.forEach(line => {
+    const p=line.split(';').map(f=>f.replace(/^"|"$/g,'').trim());
+    if(!String(p[0]||'').includes('98')) return;
+    const sku=p[5]; if(!sku||sku==='CODPRODUTO') return;
+    rows.push({sku,tam:p[6],produto:p[8],marca:p[4],departamento:p[1],estoque:Number(p[13])||0});
+  });
+  S.erpData=rows; S.erpLoaded=true;
+  alert(`✓ Space CSV: ${rows.length} linhas de "${fn}" (Filial 98)`);
+  tryMerge(); renderImport('space');
+}
+
+function extractSize(nomesku) {
+  if(!nomesku) return '';
+  const s = String(nomesku);
+  const m = s.match(/(\d{2}),\d/);
+  if(m) return m[1];
+  const nums = [...s.matchAll(/(\d{2,3})/g)].map(x=>x[1]).filter(n=>parseInt(n)>=24&&parseInt(n)<=50);
+  if(nums.length) return nums[nums.length-1].slice(-2);
+  const all = s.match(/\d+/g);
+  if(all) { const last=all[all.length-1]; return last.length>=2?last.slice(-2):last; }
+  return '';
+}
+
+function tryMerge() {
+  if (!S.erpData || !S.meliData) return;
+  const erpTamMap = {}, erpCodMap = {};
+  S.erpData.forEach(r => {
+    const key = r.sku + '|' + (r.tam||'');
+    erpTamMap[key] = r;
+    if(!erpCodMap[r.sku]) erpCodMap[r.sku] = {estoque:0, produto:r.produto, marca:r.marca, departamento:r.departamento};
+    erpCodMap[r.sku].estoque += Number(r.estoque)||0;
+  });
+  const merged = [], seenCods = new Set();
+  S.meliData.forEach(ml => {
+    const vtx = (S.vtexMap||{})[ml.sku] || {};
+    const cod = vtx.cod_produto || '';
+    const size = vtx.size || extractSize(vtx.nome_sku||'');
+    const nome_sku = vtx.nome_sku || '';
+    if(cod) seenCods.add(cod);
+    let ev = null;
+    let erpMeta = {marca:'',departamento:''};
+    if(cod) {
+      const tamKey = cod + '|' + size;
+      if(size && erpTamMap[tamKey]) {
+        ev = Number(erpTamMap[tamKey].estoque)||0;
+        erpMeta = erpTamMap[tamKey];
+      } else if(size) {
+        const codExists = Object.keys(erpTamMap).some(k=>k.startsWith(cod+'|'));
+        if(codExists) {
+          ev = 0;
+          const anyKey = Object.keys(erpTamMap).find(k=>k.startsWith(cod+'|'));
+          if(anyKey) erpMeta = erpTamMap[anyKey];
+        }
+      } else if(!size && erpCodMap[cod]) {
+        ev = Number(erpCodMap[cod].estoque)||0;
+        erpMeta = erpCodMap[cod];
+      }
+    }
+    const mv = Number(ml.aptasVenda)||0;
+    const diff = ev!==null ? mv-ev : null;
+    const status = ev===null?'only-ml':diff===0?'ok':diff>0?'diverge-pos':'diverge-neg';
+    let mlb = String(ml.mlb||'');
+    if(mlb && /^\d+$/.test(mlb)) mlb = 'MLB'+mlb;
+    merged.push({sku:ml.sku,cod_produto:cod,nome_sku,size,
+      produto:ml.produto,marca:erpMeta.marca||'',departamento:erpMeta.departamento||'',
+      mlb,statusAnuncio:ml.statusAnuncio,vendas30d:ml.vendas30d,
+      entradaPendente:ml.entradaPendente,aptasVenda:mv,naoAptas:ml.naoAptas,
+      estoque_erp:ev,diff,status});
+  });
+  Object.entries(erpCodMap).forEach(([cod, erp]) => {
+    if(!seenCods.has(cod) && Number(erp.estoque)>0) {
+      merged.push({sku:cod,cod_produto:cod,nome_sku:'',size:'',
+        produto:erp.produto,marca:erp.marca,departamento:erp.departamento,
+        mlb:'',statusAnuncio:'',vendas30d:0,entradaPendente:0,aptasVenda:null,naoAptas:0,
+        estoque_erp:Number(erp.estoque),diff:null,status:'only-erp'});
+    }
+  });
+  S.data=merged; updateBadges();
+  document.getElementById('syncTime').textContent = new Date().toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+  alert(`✓ Conciliação: ${merged.length} registros.`);
+}
+
+function procAll() {
+  if(!S.erpLoaded||!S.meliLoaded){alert('Importe Space e MeLi antes de processar.');return;}
+  tryMerge(); go('dashboard',document.getElementById('nav-dashboard'));
+}
+
+// ── DEVOLUÇÕES ────────────────────────────────────────────────────────────────
+function renderDev() {
+  document.getElementById('main').innerHTML = `
+    <div class="sh fu">Monitoramento de Devoluções</div>
+    <div class="ss fu">Rastreamento de retornos ao estoque Full ML</div>
+    <div class="metrics-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="metric m-blue fu"><div class="metric-label">Em Trânsito</div><div class="metric-val">0</div><div class="metric-sub">Aguardando chegada ao Full</div></div>
+      <div class="metric m-amber fu"><div class="metric-label">Em Análise ML</div><div class="metric-val">0</div><div class="metric-sub">ML verificando condição</div></div>
+      <div class="metric m-red fu"><div class="metric-label">Sinistro/Perda</div><div class="metric-val">0</div><div class="metric-sub">+15 dias sem retorno</div></div>
+    </div>
+    <div class="card fu">
+      <div class="card-header"><div class="card-title">Tabela de Retornos</div></div>
+      <div class="empty"><div class="empty-ico">↩</div><div class="empty-t">Nenhuma devolução registrada</div><div class="empty-s">Alimentado via integração com API do Mercado Livre</div></div>
+    </div>
+    <div class="note-blue fu"><span>💡</span><div><strong>Próximo passo:</strong> Webhook ML — <code style="font-family:'DM Mono',monospace;background:var(--surface2);padding:2px 6px;border-radius:3px">/orders/{id}/feedback</code> para monitoramento automático com regra de sinistro em 15 dias.</div></div>`;
+}
+
+// ── EXPORT CSV ────────────────────────────────────────────────────────────────
+function exportCSV(mode) {
+  let rows = mode==='all' ? S.data : S.data.filter(r=>r.status===mode);
+  const hdr = ['SKU','CODPRODUTO','Produto','Marca','Depto','CódigoML','Estoque ERP','ML Aptas','Pendente','Diff','Status'];
+  const csv = [hdr,...rows.map(r=>[r.sku,r.cod_produto,r.produto,r.marca,r.departamento,r.mlb,
+    r.estoque_erp??'',r.aptasVenda??'',r.entradaPendente||0,r.diff??'',r.status])]
+    .map(l=>l.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'}));
+  a.download='stocksync_'+new Date().toISOString().split('T')[0]+'.csv'; a.click();
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+updateBadges();
+render();
+</script>
+</body>
+</html>
