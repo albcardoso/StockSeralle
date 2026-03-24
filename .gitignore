@@ -1,0 +1,49 @@
+# ── Node / Next.js ────────────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/.env.*.local
+
+# ── .NET / C# ─────────────────────────────────────────────────────────────────
+backend/**/bin/
+backend/**/obj/
+backend/**/*.user
+backend/**/*.suo
+backend/.vs/
+backend/**/.DS_Store
+*.nupkg
+*.snupkg
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+.docker/
+
+# ── MongoDB local ─────────────────────────────────────────────────────────────
+mongo_data/
+
+# ── Env files ─────────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.production
+*.env
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ── IDEs ──────────────────────────────────────────────────────────────────────
+.vscode/settings.json   # deixa extensions.json mas ignora settings pessoais
+.idea/
+*.swp
+*.swo
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Uploads / temp ────────────────────────────────────────────────────────────
+uploads/
+tmp/

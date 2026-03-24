@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Design Tokens (extraídos do MVP HTML) ── */
+:root {
+  --bg: #f5f6fa;
+  --surface: #ffffff;
+  --surface2: #f0f2f8;
+  --surface3: #e8eaf2;
+  --border: #e2e5f0;
+  --border2: #cdd1e8;
+  --ink: #0d1224;
+  --ink2: #1e2540;
+  --ink3: #2d3660;
+  --slate: #5a6380;
+  --mist: #8892ae;
+  --ghost: #a8b0c8;
+  --accent: #ff5200;
+  --accent2: #ff7a3d;
+  --blue: #1a5ce5;
+  --blue-bg: #eef3ff;
+  --blue-border: #c5d4fa;
+  --green: #00a86b;
+  --green-bg: #e6f7f1;
+  --green-border: #99dfc6;
+  --red: #d42b2b;
+  --red-bg: #fff0f0;
+  --red-border: #f5b8b8;
+  --amber: #c97c00;
+  --amber-bg: #fff8e6;
+  --amber-border: #f0d080;
+  --purple: #6b48e8;
+  --purple-bg: #f0edff;
+  --purple-border: #c9bff8;
+  --shadow-sm: 0 1px 3px rgba(13,18,36,0.07), 0 1px 2px rgba(13,18,36,0.04);
+  --shadow-md: 0 4px 16px rgba(13,18,36,0.08), 0 1px 4px rgba(13,18,36,0.05);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  font-family: 'Instrument Sans', sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+/* Animations */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.fu { animation: fadeUp 0.35s cubic-bezier(.16,1,.3,1) both; }
+.fu:nth-child(1) { animation-delay: 0ms; }
+.fu:nth-child(2) { animation-delay: 50ms; }
+.fu:nth-child(3) { animation-delay: 100ms; }
+.fu:nth-child(4) { animation-delay: 150ms; }
