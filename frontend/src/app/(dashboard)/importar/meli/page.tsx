@@ -15,7 +15,7 @@ export default function ImportarMeliPage() {
 
     if (Object.keys(data).length === 0) {
       const cols = diag.detectedColumns.length > 0
-        ? `\n\nColunas encontradas no arquivo:\n${diag.detectedColumns.join(", ")}\n\nColunas esperadas para SKU: "SKU do vendedor", "SKU", "Seller SKU"\nColunas esperadas para Qtd: "Quantidade disponível", "Quantidade", "Stock"`
+        ? `\n\nHeader detectado na linha ${diag.headerRowIndex + 1}\nColunas encontradas: ${diag.detectedColumns.slice(0, 10).join(", ")}${diag.detectedColumns.length > 10 ? "..." : ""}\n\nSKU detectado: ${diag.skuColumn ?? "NÃO ENCONTRADO ⚠️"}\nQtd detectada: ${diag.qtyColumn ?? "NÃO ENCONTRADA ⚠️"}`
         : "\n\nArquivo parece vazio ou sem linhas válidas.";
 
       throw new Error(

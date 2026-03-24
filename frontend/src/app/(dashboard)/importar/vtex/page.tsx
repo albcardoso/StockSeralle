@@ -14,7 +14,7 @@ export default function ImportarVtexPage() {
 
     if (Object.keys(data).length === 0) {
       const cols = diag.detectedColumns.length > 0
-        ? `\n\nColunas encontradas no arquivo:\n${diag.detectedColumns.join(", ")}\n\nColunas esperadas para SKU: "RefId", "Sku", "Código"\nColunas esperadas para Qtd: "Estoque Total", "Disponível"`
+        ? `\n\nHeader detectado na linha ${diag.headerRowIndex + 1}\nColunas encontradas: ${diag.detectedColumns.slice(0, 10).join(", ")}${diag.detectedColumns.length > 10 ? "..." : ""}\n\nSKU detectado: ${diag.skuColumn ?? "NÃO ENCONTRADO ⚠️"}\nQtd detectada: ${diag.qtyColumn ?? "NÃO ENCONTRADA ⚠️"}`
         : "\n\nArquivo parece vazio.";
 
       throw new Error(`Nenhum item extraído (${diag.totalRows} linhas lidas).${cols}`);
