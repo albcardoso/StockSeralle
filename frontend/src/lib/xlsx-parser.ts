@@ -244,8 +244,7 @@ export async function parseErpXlsx(
   const allCols = Object.keys(firstRow);
 
   const skuCol = findCol(firstRow,
-    "sku", "refid", "ref id", "ref.", "referencia", "codigo", "cód",
-    "cod.", "id produto", "id sku"
+    "codproduto", "sku", "refid", "ref id", "referencia", "codigo", "cód", "cod.", "id produto", "id sku"
   );
   const nomeCol = findCol(firstRow,
     "nome", "produto", "descricao", "titulo", "name", "product"
@@ -253,24 +252,28 @@ export async function parseErpXlsx(
   const qtyCol = findCol(firstRow,
     "estoque", "saldo", "disponivel", "quantidade", "total", "stock", "qty", "qtd"
   );
+  // Filial: MVP HTML filtra apenas filial '98' (Sampa Full)
+  const filialCol = findCol(firstRow, "filial", "loja", "cod_filial", "codfilial");
 
-  console.log(`[ERP Parser] SKU="${skuCol}" | Nome="${nomeCol}" | Qty="${qtyCol}"`);
+  console.log(`[ERP Parser] SKU="${skuCol}" | Nome="${nomeCol}" | Qty="${qtyCol}" | Filial="${filialCol}"`);
 
   const data: Record<string, number> = {};
   let validRows = 0;
 
   for (const row of rows) {
+    // Filtro de filial (igual ao MVP HTML: só filial 98)
+    if (filialCol) {
+      const filial = String(row[filialCol] ?? "");
+      if (!filial.includes("98")) continue;
+    }
+
     const skuRaw = skuCol ? String(row[skuCol] ?? "").trim() : "";
     const nome = nomeCol ? String(row[nomeCol] ?? "").trim() : "";
     const qty = qtyCol ? parseFloat(String(row[qtyCol] ?? "0").replace(",", ".")) : 0;
 
-    if (!skuRaw) continue;
+    if (!skuRaw || skuRaw === "CODPRODUTO") continue;
 
-    const size = nome ? extractSize(nome) : extractSize(skuRaw);
-    const base = skuRaw.replace(/[-_]?\d+$/, "").replace(/\s+/g, " ").trim();
-    const sku = size && !base.toUpperCase().includes(size) ? `${base} ${size}` : skuRaw;
-
-    data[sku] = (data[sku] ?? 0) + (isNaN(qty) ? 0 : qty);
+    data[skuRaw] = (data[skuRaw] ?? 0) + (isNaN(qty) ? 0 : qty);
     validRows++;
   }
 
@@ -284,100 +287,114 @@ export async function parseErpXlsx(
 
 // ── MeLi Parser ───────────────────────────────────────────────────────────────
 
-// Keywords específicas MeLi — termos completos, não substrings genéricas
-const MELI_HEADER_KEYWORDS = [
-  // SKU
-  "sku do vendedor", "seller sku", "sku vendedor", "sku",
-  // Título
-  "titulo do anuncio", "titulo", "title",
-  // Quantidade
-  "quantidade disponivel", "estoque disponivel", "disponivel", "quantidade",
-  // Outros campos típicos do export MeLi
-  "status", "preco", "variacao", "categoria", "anuncio",
-];
+/**
+ * Colunas fixas do export "ML FULL" (Gerenciador de Anúncios MeLi BR)
+ * Replicado do MVP HTML original que funcionava:
+ *   for(let i=12; i<raw.length; i++) { sku=row[3], titulo=row[6], aptas=row[21] }
+ */
+const MELI_FIXED = {
+  DATA_START_ROW: 12, // Pula 12 linhas de header/instrução
+  SKU_COL:         3, // "SKU do Vendedor" (chave de match com ERP)
+  TITULO_COL:      6, // "Produto / Título do Anúncio"
+  STATUS_COL:      9, // "Status do Anúncio"
+  APTAS_COL:      21, // "Aptas para Venda" = estoque disponível
+  CODIGO_ML_COL:   1, // Código interno ML
+  MLB_COL:         4, // Código MLB long
+} as const;
 
-// Mapeamento de posição de coluna para o formato MeLi sem header
-// (usado como fallback quando nenhum header é detectado)
-// Baseado no formato padrão de export "Gerenciador de Anúncios" MeLi BR
-const MELI_FALLBACK_COLS = [
-  "__col0",       // 0  → algum flag interno
-  "__col1",       // 1  → algum flag interno
-  "preco",        // 2  → preço ou ID
-  "sku",          // 3  → SKU do Vendedor
-  "ean",          // 4  → EAN / Código de barras
-  "id_anuncio",   // 5  → ID do anúncio (número)
-  "id_longo",     // 6  → ID longo interno
-  "titulo",       // 7  → Título do anúncio
-  "variacao",     // 8  → Variação (tamanho/cor)
-  "categoria",    // 9  → Categoria
-  "status",       // 10 → Status (Ativo/Pausado)
-  "tem_variacao", // 11 → Tem variação? (Não/Sim)
+// Keywords para tentar detectar header automaticamente (formato alternativo)
+const MELI_HEADER_KEYWORDS = [
+  "sku do vendedor", "seller sku", "sku vendedor",
+  "titulo do anuncio", "titulo", "aptas para venda", "aptas",
+  "quantidade disponivel", "disponivel", "quantidade",
+  "status", "variacao", "categoria",
 ];
 
 export async function parseMeliXlsx(
   file: File
 ): Promise<{ data: Record<string, { qty: number; desc: string }>; diag: ParseDiagnostic }> {
-  const raw = await fileToRawRows(file);
+  // Lê o workbook diretamente para controlar seleção de aba
+  const wb = await readWorkbook(file);
+
+  // Prioriza aba 'Resumo' (formato ML Full), igual ao MVP HTML original
+  const sheetName = wb.SheetNames.includes("Resumo")
+    ? "Resumo"
+    : wb.SheetNames[0];
+
+  const ws = wb.Sheets[sheetName];
+  const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: "" });
 
   if (raw.length === 0) return { data: {}, diag: emptyDiag() };
 
-  // Log diagnóstico: primeiras 3 linhas completas
-  console.log(`[MeLi Parser] Arquivo: ${file.name} | ${raw.length} linhas`);
-  console.log(`[MeLi Parser] raw[0] completo:`, raw[0]);
-  console.log(`[MeLi Parser] raw[1] completo:`, raw[1]);
+  console.log(`[MeLi Parser] Arquivo: ${file.name} | Aba: "${sheetName}" | ${raw.length} linhas`);
+  console.log(`[MeLi Parser] raw[0]:`, raw[0]);
+  console.log(`[MeLi Parser] raw[12]:`, raw[MELI_FIXED.DATA_START_ROW]);
 
+  // Tenta detectar header automático (formatos futuros ou exports diferentes)
   const headerIdx = detectHeaderRow(raw, MELI_HEADER_KEYWORDS);
-
-  let rows: Record<string, unknown>[];
-  if (headerIdx === -1) {
-    // Sem header detectado → usa mapeamento por posição de coluna
-    console.warn(`[MeLi Parser] Usando mapeamento por posição (sem header detectado)`);
-    rows = rawToObjects(raw, -1, MELI_FALLBACK_COLS);
-  } else {
-    rows = rawToObjects(raw, headerIdx);
-  }
-
-  console.log(`[MeLi Parser] Header linha ${headerIdx === -1 ? "N/A (posição)" : headerIdx + 1}`);
-  console.log(`[MeLi Parser] Colunas detectadas:`, Object.keys(rows[0] ?? {}));
-
-  if (rows.length === 0) return { data: {}, diag: emptyDiag() };
-
-  const firstRow = rows[0];
-  const allCols = Object.keys(firstRow);
-
-  const skuCol = findCol(firstRow,
-    "sku do vendedor", "seller sku", "sku vendedor", "sku", "referencia", "codigo"
-  );
-  const descCol = findCol(firstRow,
-    "titulo do anuncio", "titulo", "title", "nome", "descricao", "anuncio"
-  );
-  const qtyCol = findCol(firstRow,
-    "quantidade disponivel", "estoque disponivel", "disponivel",
-    "quantidade", "estoque", "stock", "qty", "saldo"
-  );
-
-  console.log(`[MeLi Parser] SKU="${skuCol}" | Desc="${descCol}" | Qty="${qtyCol}"`);
 
   const data: Record<string, { qty: number; desc: string }> = {};
   let validRows = 0;
 
-  for (const row of rows) {
-    const sku = skuCol ? String(row[skuCol] ?? "").trim() : "";
-    const desc = descCol ? String(row[descCol] ?? "").trim() : "";
-    const qty = qtyCol ? parseFloat(String(row[qtyCol] ?? "0").replace(",", ".")) : 0;
+  if (headerIdx >= 0) {
+    // ── Modo automático: header detectado ───────────────────────────────────
+    const rows = rawToObjects(raw, headerIdx);
+    const firstRow = rows[0] ?? {};
+    const allCols = Object.keys(firstRow);
 
-    if (!sku) continue;
+    const skuCol = findCol(firstRow,
+      "sku do vendedor", "seller sku", "sku vendedor", "sku", "referencia", "codigo"
+    );
+    const descCol = findCol(firstRow,
+      "titulo do anuncio", "titulo", "aptas", "title", "nome", "descricao"
+    );
+    const qtyCol = findCol(firstRow,
+      "aptas para venda", "aptas", "quantidade disponivel", "estoque disponivel",
+      "disponivel", "quantidade", "estoque", "stock", "qty"
+    );
+    console.log(`[MeLi Parser] Modo auto: header linha ${headerIdx + 1} | SKU="${skuCol}" Desc="${descCol}" Qty="${qtyCol}"`);
+    console.log(`[MeLi Parser] Colunas:`, allCols.slice(0, 15));
 
-    data[sku] = { qty: isNaN(qty) ? 0 : qty, desc };
-    validRows++;
+    for (const row of rows) {
+      const sku = skuCol ? String(row[skuCol] ?? "").trim() : "";
+      if (!sku || sku === "nan") continue;
+      const desc = descCol ? String(row[descCol] ?? "").trim() : "";
+      const qty = qtyCol ? parseFloat(String(row[qtyCol] ?? "0").replace(",", ".")) : 0;
+      data[sku] = { qty: isNaN(qty) ? 0 : qty, desc };
+      validRows++;
+    }
+
+    console.log(`[MeLi Parser] ✓ ${validRows} itens extraídos`);
+    const diagCols = Object.keys(rows[0] ?? {});
+    return {
+      data,
+      diag: { totalRows: raw.length, validRows, headerRowIndex: headerIdx, detectedColumns: diagCols, skuColumn: skuCol, qtyColumn: qtyCol, descColumn: descCol },
+    };
+
+  } else {
+    // ── Modo hardcoded: formato ML Full (igual ao MVP HTML original) ─────────
+    const { DATA_START_ROW, SKU_COL, TITULO_COL, APTAS_COL } = MELI_FIXED;
+    console.log(`[MeLi Parser] Modo hardcoded ML Full: linha ${DATA_START_ROW + 1}+ | SKU=col${SKU_COL} Titulo=col${TITULO_COL} Aptas=col${APTAS_COL}`);
+
+    for (let i = DATA_START_ROW; i < raw.length; i++) {
+      const row = raw[i];
+      const sku = String(row[SKU_COL] ?? "").trim();
+      if (!sku || sku === "nan") continue;
+      const desc = String(row[TITULO_COL] ?? "").trim();
+      const qty  = parseFloat(String(row[APTAS_COL] ?? "0").replace(",", "."));
+      data[sku] = { qty: isNaN(qty) ? 0 : qty, desc };
+      validRows++;
+    }
+
+    return {
+      data,
+      diag: {
+        totalRows: raw.length, validRows, headerRowIndex: -1,
+        detectedColumns: [`SKU=col${SKU_COL}`, `Titulo=col${TITULO_COL}`, `Aptas=col${APTAS_COL}`],
+        skuColumn: `col${SKU_COL}`, qtyColumn: `col${APTAS_COL}`, descColumn: `col${TITULO_COL}`,
+      },
+    };
   }
-
-  console.log(`[MeLi Parser] ✓ ${validRows} itens extraídos`);
-
-  return {
-    data,
-    diag: { totalRows: raw.length, validRows, headerRowIndex: headerIdx, detectedColumns: allCols, skuColumn: skuCol, qtyColumn: qtyCol, descColumn: descCol },
-  };
 }
 
 // ── Merge ─────────────────────────────────────────────────────────────────────
