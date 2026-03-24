@@ -122,11 +122,24 @@ export default function UploadCard({
             <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 700, fontSize: 15, color: "var(--red)" }}>
               Erro ao processar
             </div>
-            <div style={{ fontSize: 13, color: "var(--mist)", marginTop: 6 }}>{errorMsg}</div>
+            {/* Mostra mensagem de erro linha por linha */}
+            <div style={{
+              marginTop: 10, textAlign: "left",
+              background: "var(--red-bg)", border: "1px solid var(--red-border)",
+              borderRadius: 8, padding: "12px 14px",
+              fontFamily: "DM Mono, monospace", fontSize: 11,
+              color: "var(--red)", whiteSpace: "pre-wrap", maxHeight: 220,
+              overflowY: "auto", lineHeight: 1.7,
+            }}>
+              {errorMsg}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--mist)", marginTop: 8 }}>
+              Abra o Console do navegador (F12 → Console) para mais detalhes
+            </div>
             <button
               onClick={() => { setStatus("idle"); setFileName(null); }}
               style={{
-                marginTop: 16, padding: "8px 16px",
+                marginTop: 14, padding: "8px 16px",
                 background: "var(--red-bg)", color: "var(--red)",
                 border: "1px solid var(--red-border)", borderRadius: 7,
                 fontSize: 12, cursor: "pointer",
