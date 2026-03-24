@@ -1,28 +1,18 @@
 "use client";
 
-/**
- * Página de Conciliação ERP × MeLi
- *
- * Esta página é a migração React do fluxo original do HTML legado.
- * A lógica de parsing XLSX foi movida para src/lib/xlsx-parser.ts
- *
- * TODO (próximos passos):
- * 1. Conectar ao backend via Server Actions quando a API estiver pronta
- * 2. Substituir parsers client-side por upload + processamento no backend
- * 3. Adicionar persistência dos dados no MongoDB
- */
-
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useStock } from "@/contexts/StockContext";
 import ConciliacaoTable from "@/components/features/conciliacao/ConciliacaoTable";
-import ImportZone from "@/components/features/conciliacao/ImportZone";
 import type { ConciliacaoItem } from "@/types";
 
 export default function ConciliacaoPage() {
-  const [items, setItems] = useState<ConciliacaoItem[]>([]);
+  const { conciliacao, erpFileName, meliFileName, clearAll } = useStock();
+  const router = useRouter();
   const [filter, setFilter] = useState<"all" | "div" | "ok" | "erp-only" | "meli-only">("all");
   const [search, setSearch] = useState("");
 
-  const filtered = items.filter((item) => {
+  const filtered = conciliacao.filter((item) => {
     const matchesFilter =
       filter === "all" ||
       (filter === "div" && item.status === "divergente") ||
@@ -38,134 +28,174 @@ export default function ConciliacaoPage() {
     return matchesFilter && matchesSearch;
   });
 
+  const counts = {
+    div: conciliacao.filter((i) => i.status === "divergente").length,
+    ok: conciliacao.filter((i) => i.status === "ok").length,
+    erp: conciliacao.filter((i) => i.status === "so_erp").length,
+    meli: conciliacao.filter((i) => i.status === "so_meli").length,
+  };
+
+  // Nenhum dado importado ainda
+  if (conciliacao.length === 0) {
+    return (
+      <div>
+        <div style={{ marginBottom: 24 }}>
+          <h1 style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 22, color: "var(--ink)", letterSpacing: "-0.5px" }}>
+            Conciliação ERP × MeLi
+          </h1>
+          <p style={{ fontSize: 13, color: "var(--mist)", marginTop: 4 }}>
+            Compare o estoque do ERP com os anúncios do Mercado Livre
+          </p>
+        </div>
+
+        {/* Guia de importação */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 20 }}>
+          <StepCard
+            step={1}
+            title="Importe o ERP"
+            description="Space ou VTEX"
+            done={!!erpFileName}
+            fileName={erpFileName}
+            onClick={() => router.push("/importar/space")}
+            color="var(--purple)"
+            bg="var(--purple-bg)"
+          />
+          <StepCard
+            step={2}
+            title="Importe o MeLi"
+            description="Gerenciador de Anúncios"
+            done={!!meliFileName}
+            fileName={meliFileName}
+            onClick={() => router.push("/importar/meli")}
+            color="var(--amber)"
+            bg="var(--amber-bg)"
+          />
+        </div>
+
+        <div style={{ background: "var(--blue-bg)", border: "1px solid var(--blue-border)", borderRadius: 10, padding: "12px 16px", fontSize: 13, color: "var(--blue)" }}>
+          ℹ️ Importe os dois arquivos para ver a conciliação completa. Os dados ficam disponíveis em toda a sessão.
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
-      <div style={{ marginBottom: 24 }}>
-        <h1
-          style={{
-            fontFamily: "Syne, sans-serif",
-            fontWeight: 800,
-            fontSize: 22,
-            color: "var(--ink)",
-            letterSpacing: "-0.5px",
-          }}
+      {/* Cabeçalho */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
+        <div>
+          <h1 style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 22, color: "var(--ink)", letterSpacing: "-0.5px" }}>
+            Conciliação ERP × MeLi
+          </h1>
+          <div style={{ display: "flex", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
+            {erpFileName && <FileBadge label={erpFileName} color="var(--purple)" bg="var(--purple-bg)" />}
+            {meliFileName && <FileBadge label={meliFileName} color="var(--amber)" bg="var(--amber-bg)" />}
+          </div>
+        </div>
+        <button
+          onClick={clearAll}
+          style={{ padding: "7px 14px", background: "var(--surface2)", color: "var(--slate)", border: "1px solid var(--border2)", borderRadius: 7, fontSize: 12, cursor: "pointer" }}
         >
-          Conciliação ERP × MeLi
-        </h1>
-        <p style={{ fontSize: 13, color: "var(--mist)", marginTop: 4 }}>
-          Compare o estoque do ERP com os anúncios do Mercado Livre
-        </p>
+          ↩ Novo import
+        </button>
       </div>
 
-      {items.length === 0 ? (
-        <ImportZone onDataLoaded={setItems} />
-      ) : (
-        <>
-          {/* Filtro */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              background: "var(--surface)",
-              border: "1px solid var(--border)",
-              borderRadius: 10,
-              padding: "10px 14px",
-              marginBottom: 14,
-              flexWrap: "wrap",
-              boxShadow: "var(--shadow-sm)",
-            }}
-          >
-            <span
-              style={{
-                fontFamily: "DM Mono, monospace",
-                fontSize: 10,
-                fontWeight: 500,
-                color: "var(--mist)",
-                textTransform: "uppercase",
-                letterSpacing: "0.8px",
-              }}
-            >
-              Filtrar
-            </span>
+      {/* Cards de resumo */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+        <SummaryCard label="Divergências" value={counts.div} color="var(--red)" bg="var(--red-bg)" onClick={() => setFilter("div")} active={filter === "div"} />
+        <SummaryCard label="Só no ERP" value={counts.erp} color="var(--purple)" bg="var(--purple-bg)" onClick={() => setFilter("erp-only")} active={filter === "erp-only"} />
+        <SummaryCard label="Só no MeLi" value={counts.meli} color="var(--amber)" bg="var(--amber-bg)" onClick={() => setFilter("meli-only")} active={filter === "meli-only"} />
+        <SummaryCard label="OK" value={counts.ok} color="var(--green)" bg="var(--green-bg)" onClick={() => setFilter("ok")} active={filter === "ok"} />
+      </div>
 
-            {(
-              [
-                { value: "all", label: "Todos" },
-                { value: "div", label: "Divergentes" },
-                { value: "ok", label: "OK" },
-                { value: "erp-only", label: "Só ERP" },
-                { value: "meli-only", label: "Só MeLi" },
-              ] as const
-            ).map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => setFilter(opt.value)}
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 6,
-                  border: `1px solid ${filter === opt.value ? "var(--blue)" : "var(--border2)"}`,
-                  background:
-                    filter === opt.value ? "var(--blue-bg)" : "var(--surface2)",
-                  color:
-                    filter === opt.value ? "var(--blue)" : "var(--slate)",
-                  fontSize: 12,
-                  cursor: "pointer",
-                  fontWeight: filter === opt.value ? 600 : 400,
-                  transition: "all 0.12s",
-                }}
-              >
-                {opt.label}
-              </button>
-            ))}
+      {/* Barra de filtros + busca */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, flexWrap: "wrap", boxShadow: "var(--shadow-sm)" }}>
+        <span style={{ fontFamily: "DM Mono, monospace", fontSize: 10, fontWeight: 500, color: "var(--mist)", textTransform: "uppercase", letterSpacing: "0.8px" }}>
+          Filtrar
+        </span>
+        {([ { value: "all", label: "Todos" }, { value: "div", label: "Divergentes" }, { value: "ok", label: "OK" }, { value: "erp-only", label: "Só ERP" }, { value: "meli-only", label: "Só MeLi" } ] as const).map((opt) => (
+          <button key={opt.value} onClick={() => setFilter(opt.value)}
+            style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${filter === opt.value ? "var(--blue)" : "var(--border2)"}`, background: filter === opt.value ? "var(--blue-bg)" : "var(--surface2)", color: filter === opt.value ? "var(--blue)" : "var(--slate)", fontSize: 12, cursor: "pointer", fontWeight: filter === opt.value ? 600 : 400 }}>
+            {opt.label}
+          </button>
+        ))}
+        <input type="text" placeholder="Buscar SKU ou descrição..." value={search} onChange={(e) => setSearch(e.target.value)}
+          style={{ flex: 1, minWidth: 180, padding: "7px 12px", background: "var(--surface)", border: "1.5px solid var(--border2)", borderRadius: 6, color: "var(--ink)", fontSize: 13, outline: "none" }} />
+        <span style={{ fontFamily: "DM Mono, monospace", fontSize: 11, color: "var(--slate)" }}>
+          {filtered.length} / {conciliacao.length} itens
+        </span>
+        <ExportButton items={filtered} />
+      </div>
 
-            <input
-              type="text"
-              placeholder="Buscar SKU ou descrição..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={{
-                flex: 1,
-                minWidth: 180,
-                padding: "7px 12px",
-                background: "var(--surface)",
-                border: "1.5px solid var(--border2)",
-                borderRadius: 6,
-                color: "var(--ink)",
-                fontSize: 13,
-                outline: "none",
-              }}
-            />
-
-            <span
-              style={{
-                fontFamily: "DM Mono, monospace",
-                fontSize: 10,
-                color: "var(--slate)",
-              }}
-            >
-              {filtered.length} itens
-            </span>
-
-            <button
-              onClick={() => setItems([])}
-              style={{
-                padding: "6px 12px",
-                borderRadius: 6,
-                border: "1px solid var(--border2)",
-                background: "var(--surface2)",
-                color: "var(--slate)",
-                fontSize: 11,
-                cursor: "pointer",
-              }}
-            >
-              ↩ Novo import
-            </button>
-          </div>
-
-          <ConciliacaoTable items={filtered} />
-        </>
-      )}
+      <ConciliacaoTable items={filtered} />
     </div>
+  );
+}
+
+// ── Sub-componentes ───────────────────────────────────────────────────────────
+
+function StepCard({ step, title, description, done, fileName, onClick, color, bg }: {
+  step: number; title: string; description: string; done: boolean; fileName: string | null; onClick: () => void; color: string; bg: string;
+}) {
+  return (
+    <div onClick={!done ? onClick : undefined}
+      style={{ background: done ? bg : "var(--surface)", border: `1.5px solid ${done ? color : "var(--border)"}`, borderRadius: 12, padding: "20px", cursor: done ? "default" : "pointer", transition: "all 0.15s" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+        <span style={{ width: 24, height: 24, borderRadius: "50%", background: done ? color : "var(--surface2)", color: done ? "white" : "var(--slate)", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "DM Mono, monospace" }}>{done ? "✓" : step}</span>
+        <span style={{ fontWeight: 600, fontSize: 14, color: done ? color : "var(--ink)" }}>{title}</span>
+      </div>
+      <div style={{ fontSize: 12, color: done ? color : "var(--mist)" }}>
+        {done ? `✓ ${fileName}` : `Clique para importar · ${description}`}
+      </div>
+    </div>
+  );
+}
+
+function SummaryCard({ label, value, color, bg, onClick, active }: {
+  label: string; value: number; color: string; bg: string; onClick: () => void; active: boolean;
+}) {
+  return (
+    <div onClick={onClick}
+      style={{ background: active ? bg : "var(--surface)", border: `1px solid ${active ? color : "var(--border)"}`, borderRadius: 10, padding: "12px 16px", cursor: "pointer", transition: "all 0.15s", boxShadow: "var(--shadow-sm)" }}>
+      <div style={{ fontSize: 11, color: active ? color : "var(--mist)", marginBottom: 6, fontFamily: "DM Mono, monospace" }}>{label}</div>
+      <div style={{ fontFamily: "DM Mono, monospace", fontSize: 24, fontWeight: 500, color: active ? color : "var(--ink)" }}>{value}</div>
+    </div>
+  );
+}
+
+function FileBadge({ label, color, bg }: { label: string; color: string; bg: string }) {
+  return (
+    <span style={{ padding: "3px 10px", background: bg, color, border: `1px solid ${color}`, borderRadius: 5, fontSize: 11, fontFamily: "DM Mono, monospace", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      {label}
+    </span>
+  );
+}
+
+function ExportButton({ items }: { items: ConciliacaoItem[] }) {
+  function exportCSV() {
+    const headers = ["SKU", "Descrição", "Qtd ERP", "Qtd MeLi", "Diferença", "Status"];
+    const rows = items.map((i) => [
+      i.sku,
+      i.descricao ?? "",
+      i.qtdErp ?? "",
+      i.qtdMeli ?? "",
+      i.qtdMeli !== undefined && i.qtdErp !== undefined ? i.qtdMeli - i.qtdErp : "",
+      i.status,
+    ]);
+    const csv = [headers, ...rows].map((r) => r.map((v) => `"${v}"`).join(",")).join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `conciliacao_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <button onClick={exportCSV}
+      style={{ padding: "6px 14px", background: "var(--blue-bg)", color: "var(--blue)", border: "1px solid var(--blue-border)", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+      ↓ Exportar CSV
+    </button>
   );
 }

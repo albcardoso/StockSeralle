@@ -1,47 +1,29 @@
-import type { Metadata } from "next";
+"use client";
 
-export const metadata: Metadata = {
-  title: "Dashboard — StockSync",
-};
+import { useRouter } from "next/navigation";
+import { useStock } from "@/contexts/StockContext";
 
-// Tipagem das métricas do dashboard
-interface DashboardStats {
-  totalErp: number;
-  totalMeli: number;
-  divergencias: number;
-  soErp: number;
-  soMeli: number;
-  okCount: number;
-}
+export default function DashboardPage() {
+  const { conciliacao, erpFileName, meliFileName } = useStock();
+  const router = useRouter();
 
-// TODO: Substituir por chamada real à API quando o backend estiver pronto
-async function fetchStats(): Promise<DashboardStats | null> {
-  try {
-    const res = await fetch(`${process.env.API_URL}/api/estoque/stats`, {
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
-    return res.json();
-  } catch {
-    return null;
-  }
-}
+  const hasData = conciliacao.length > 0;
 
-export default async function DashboardPage() {
-  const stats = await fetchStats();
+  const stats = hasData
+    ? {
+        totalErp: conciliacao.filter((i) => i.qtdErp !== undefined).length,
+        totalMeli: conciliacao.filter((i) => i.qtdMeli !== undefined).length,
+        divergencias: conciliacao.filter((i) => i.status === "divergente").length,
+        soErp: conciliacao.filter((i) => i.status === "so_erp").length,
+        soMeli: conciliacao.filter((i) => i.status === "so_meli").length,
+        okCount: conciliacao.filter((i) => i.status === "ok").length,
+      }
+    : null;
 
   return (
     <div>
       <div style={{ marginBottom: 24 }}>
-        <h1
-          style={{
-            fontFamily: "Syne, sans-serif",
-            fontWeight: 800,
-            fontSize: 22,
-            color: "var(--ink)",
-            letterSpacing: "-0.5px",
-          }}
-        >
+        <h1 style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 22, color: "var(--ink)", letterSpacing: "-0.5px" }}>
           Dashboard
         </h1>
         <p style={{ fontSize: 13, color: "var(--mist)", marginTop: 4 }}>
@@ -49,130 +31,96 @@ export default async function DashboardPage() {
         </p>
       </div>
 
-      {/* Métricas */}
       {stats ? (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-            gap: 14,
-            marginBottom: 24,
-          }}
-        >
-          <MetricCard
-            label="Total ERP"
-            value={stats.totalErp}
-            color="var(--blue)"
-            bg="var(--blue-bg)"
-          />
-          <MetricCard
-            label="Total MeLi"
-            value={stats.totalMeli}
-            color="var(--purple)"
-            bg="var(--purple-bg)"
-          />
-          <MetricCard
-            label="Divergências"
-            value={stats.divergencias}
-            color="var(--red)"
-            bg="var(--red-bg)"
-          />
-          <MetricCard
-            label="Só no ERP"
-            value={stats.soErp}
-            color="var(--amber)"
-            bg="var(--amber-bg)"
-          />
-          <MetricCard
-            label="Só no MeLi"
-            value={stats.soMeli}
-            color="var(--amber)"
-            bg="var(--amber-bg)"
-          />
-          <MetricCard
-            label="OK"
-            value={stats.okCount}
-            color="var(--green)"
-            bg="var(--green-bg)"
-          />
-        </div>
+        <>
+          {/* Arquivos importados */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+            {erpFileName && <FileBadge label={erpFileName} color="var(--purple)" bg="var(--purple-bg)" />}
+            {meliFileName && <FileBadge label={meliFileName} color="var(--amber)" bg="var(--amber-bg)" />}
+          </div>
+
+          {/* Métricas */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 14, marginBottom: 24 }}>
+            <MetricCard label="Total ERP" value={stats.totalErp} color="var(--blue)" bg="var(--blue-bg)" onClick={() => router.push("/conciliacao")} />
+            <MetricCard label="Total MeLi" value={stats.totalMeli} color="var(--purple)" bg="var(--purple-bg)" onClick={() => router.push("/conciliacao")} />
+            <MetricCard label="Divergências" value={stats.divergencias} color="var(--red)" bg="var(--red-bg)" highlight onClick={() => router.push("/conciliacao")} />
+            <MetricCard label="Só no ERP" value={stats.soErp} color="var(--amber)" bg="var(--amber-bg)" onClick={() => router.push("/so-erp")} />
+            <MetricCard label="Só no MeLi" value={stats.soMeli} color="var(--amber)" bg="var(--amber-bg)" onClick={() => router.push("/so-meli")} />
+            <MetricCard label="OK" value={stats.okCount} color="var(--green)" bg="var(--green-bg)" onClick={() => router.push("/conciliacao")} />
+          </div>
+
+          {/* Ação rápida */}
+          <div style={{ display: "flex", gap: 10 }}>
+            <QuickAction icon="⇄" label="Ver Conciliação" onClick={() => router.push("/conciliacao")} primary />
+            <QuickAction icon="↑" label="Reimportar ERP" onClick={() => router.push("/importar/space")} />
+            <QuickAction icon="↑" label="Reimportar MeLi" onClick={() => router.push("/importar/meli")} />
+          </div>
+        </>
       ) : (
-        <EmptyState />
+        <EmptyState erpDone={!!erpFileName} meliDone={!!meliFileName} router={router} />
       )}
     </div>
   );
 }
 
-function MetricCard({
-  label,
-  value,
-  color,
-  bg,
-}: {
-  label: string;
-  value: number;
-  color: string;
-  bg: string;
+// ── Sub-componentes ───────────────────────────────────────────────────────────
+
+function MetricCard({ label, value, color, bg, onClick, highlight }: {
+  label: string; value: number; color: string; bg: string; onClick?: () => void; highlight?: boolean;
 }) {
   return (
-    <div
-      className="fu"
-      style={{
-        background: "var(--surface)",
-        border: "1px solid var(--border)",
-        borderRadius: 10,
-        padding: "16px 18px",
-        boxShadow: "var(--shadow-sm)",
-      }}
-    >
-      <div style={{ fontSize: 12, color: "var(--mist)", marginBottom: 8 }}>
-        {label}
-      </div>
-      <div
-        style={{
-          fontFamily: "DM Mono, monospace",
-          fontSize: 26,
-          fontWeight: 500,
-          color,
-          background: bg,
-          display: "inline-block",
-          padding: "2px 8px",
-          borderRadius: 6,
-        }}
-      >
+    <div className="fu" onClick={onClick}
+      style={{ background: "var(--surface)", border: `1px solid ${highlight ? color : "var(--border)"}`, borderRadius: 10, padding: "16px 18px", boxShadow: "var(--shadow-sm)", cursor: onClick ? "pointer" : "default", transition: "transform 0.1s" }}
+      onMouseEnter={(e) => onClick && ((e.currentTarget as HTMLElement).style.transform = "translateY(-1px)")}
+      onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.transform = "none")}>
+      <div style={{ fontSize: 12, color: "var(--mist)", marginBottom: 8 }}>{label}</div>
+      <div style={{ fontFamily: "DM Mono, monospace", fontSize: 26, fontWeight: 500, color, background: bg, display: "inline-block", padding: "2px 8px", borderRadius: 6 }}>
         {value.toLocaleString("pt-BR")}
       </div>
     </div>
   );
 }
 
-function EmptyState() {
+function FileBadge({ label, color, bg }: { label: string; color: string; bg: string }) {
   return (
-    <div
-      style={{
-        background: "var(--surface)",
-        border: "1px solid var(--border)",
-        borderRadius: 12,
-        padding: "48px 24px",
-        textAlign: "center",
-        boxShadow: "var(--shadow-sm)",
-      }}
-    >
+    <span style={{ padding: "4px 12px", background: bg, color, borderRadius: 6, fontSize: 11, fontFamily: "DM Mono, monospace" }}>
+      ✓ {label}
+    </span>
+  );
+}
+
+function QuickAction({ icon, label, onClick, primary }: { icon: string; label: string; onClick: () => void; primary?: boolean }) {
+  return (
+    <button onClick={onClick}
+      style={{ padding: "9px 18px", background: primary ? "var(--accent)" : "var(--surface)", color: primary ? "white" : "var(--slate)", border: `1px solid ${primary ? "var(--accent)" : "var(--border2)"}`, borderRadius: 8, fontSize: 13, fontWeight: primary ? 600 : 400, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+      {icon} {label}
+    </button>
+  );
+}
+
+function EmptyState({ erpDone, meliDone, router }: { erpDone: boolean; meliDone: boolean; router: ReturnType<typeof useRouter> }) {
+  return (
+    <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, padding: "40px 32px", boxShadow: "var(--shadow-sm)" }}>
       <div style={{ fontSize: 34, marginBottom: 12 }}>📦</div>
-      <div
-        style={{
-          fontFamily: "Syne, sans-serif",
-          fontWeight: 700,
-          fontSize: 16,
-          color: "var(--slate)",
-          marginBottom: 6,
-        }}
-      >
+      <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 700, fontSize: 17, color: "var(--slate)", marginBottom: 6 }}>
         Nenhum dado carregado
       </div>
-      <div style={{ fontSize: 13, color: "var(--ghost)" }}>
+      <div style={{ fontSize: 13, color: "var(--ghost)", marginBottom: 24 }}>
         Importe os arquivos ERP e MeLi para ver a conciliação
       </div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <ActionBtn done={erpDone} label={erpDone ? "ERP importado ✓" : "Importar ERP (Space/VTEX)"} onClick={() => router.push("/importar/space")} />
+        <ActionBtn done={meliDone} label={meliDone ? "MeLi importado ✓" : "Importar MeLi"} onClick={() => router.push("/importar/meli")} />
+      </div>
     </div>
+  );
+}
+
+function ActionBtn({ done, label, onClick }: { done: boolean; label: string; onClick: () => void }) {
+  return (
+    <button onClick={!done ? onClick : undefined}
+      style={{ padding: "10px 20px", background: done ? "var(--green-bg)" : "var(--accent)", color: done ? "var(--green)" : "white", border: done ? "1px solid var(--green-border)" : "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: done ? "default" : "pointer" }}>
+      {label}
+    </button>
   );
 }
