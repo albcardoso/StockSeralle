@@ -1,14 +1,11 @@
 /**
  * Parser XLSX/CSV para conciliação ERP × MeLi
  *
- * Estratégia robusta:
- * 1. Lê todas as linhas como array bruto (sem assumir header na linha 1)
- * 2. Varre as primeiras linhas para encontrar a linha de cabeçalho real
- *    (identifica pela presença de palavras-chave conhecidas nas células)
- * 3. Usa essa linha como header e parseia os dados abaixo
- *
- * Isso resolve o caso de arquivos VTEX e MeLi que têm linhas de instrução
- * ou células mescladas antes do cabeçalho real.
+ * Detecção de header robusta:
+ * - Lê arquivo como array bruto
+ * - Pontua cada linha por keywords ESPECÍFICAS (>= 4 chars, sem "id" genérico)
+ * - Penaliza linhas que parecem dados (muitos números, códigos de produto)
+ * - Usa a linha com maior score como header
  */
 
 import * as XLSX from "xlsx";
@@ -28,7 +25,6 @@ export interface ParseDiagnostic {
 
 // ── Normalização ──────────────────────────────────────────────────────────────
 
-/** Remove acentos, lowercase e trim */
 function norm(s: unknown): string {
   return String(s ?? "")
     .normalize("NFD")
@@ -37,19 +33,124 @@ function norm(s: unknown): string {
     .trim();
 }
 
-/** Verifica se uma string normalizada contém alguma das keywords */
-function matches(value: unknown, ...keywords: string[]): boolean {
-  const n = norm(value);
-  return keywords.some((kw) => n.includes(norm(kw)));
-}
-
-/** Encontra a chave do objeto cujo nome normalizado contém alguma keyword */
 function findCol(obj: Record<string, unknown>, ...keywords: string[]): string | null {
   for (const kw of keywords) {
     const found = Object.keys(obj).find((k) => norm(k).includes(norm(kw)));
     if (found !== undefined) return found;
   }
   return null;
+}
+
+// ── Detecção de linha de header ───────────────────────────────────────────────
+
+/** Retorna true se a célula parece um VALOR de dado, não um nome de coluna */
+function looksLikeData(cell: unknown): boolean {
+  const s = String(cell ?? "").trim();
+  if (!s) return false;
+
+  // Número puro (ex: 289364, 0, 2) → dado
+  if (/^\d{1,20}$/.test(s)) return true;
+
+  // Código de produto: letras+números longos, ex: CDID51174, MLB1234567890
+  if (/^[A-Za-z]{1,5}\d{4,}$/.test(s)) return true;
+
+  // EAN/barcode: só dígitos longos
+  if (/^\d{8,20}$/.test(s)) return true;
+
+  // Texto muito longo (descrição de produto) — improvável como nome de coluna
+  if (s.length > 60) return true;
+
+  return false;
+}
+
+/**
+ * Pontua uma linha segundo sua probabilidade de ser um header.
+ * Penaliza células que parecem dados.
+ */
+function scoreHeaderRow(row: unknown[], keywords: string[]): number {
+  if (!row || row.length === 0) return -999;
+
+  let kwMatches = 0;
+  let dataLikeCells = 0;
+  let emptyCells = 0;
+  const totalCells = row.length;
+
+  for (const cell of row) {
+    const s = String(cell ?? "").trim();
+    if (!s) { emptyCells++; continue; }
+
+    if (looksLikeData(cell)) {
+      dataLikeCells++;
+      continue; // não testa keywords em células que parecem dados
+    }
+
+    const n = norm(cell);
+    for (const kw of keywords) {
+      if (n.includes(norm(kw))) {
+        kwMatches++;
+        break; // conta no máximo 1 por célula
+      }
+    }
+  }
+
+  const filledCells = totalCells - emptyCells;
+  if (filledCells === 0) return -999;
+
+  // Score: keyword matches, penalizado por proporção de células que parecem dados
+  const dataRatio = dataLikeCells / filledCells;
+  const score = kwMatches - (dataRatio * 10);
+
+  return score;
+}
+
+function detectHeaderRow(rows: unknown[][], keywords: string[], maxScan = 20): number {
+  let bestRow = 0;
+  let bestScore = -Infinity;
+
+  for (let i = 0; i < Math.min(rows.length, maxScan); i++) {
+    const s = scoreHeaderRow(rows[i], keywords);
+    console.log(`[detectHeader] linha ${i + 1} score=${s.toFixed(2)}`, rows[i]?.slice(0, 5));
+    if (s > bestScore) {
+      bestScore = s;
+      bestRow = i;
+    }
+  }
+
+  // Fallback: se o melhor score ainda é <= 0, tenta linha 0 ou 1
+  if (bestScore <= 0) {
+    console.warn("[detectHeader] Score baixo, tentando linha 1 ou 2 como fallback");
+    // Prefere linha com mais células não-numéricas
+    const scores = [0, 1].map((i) => {
+      const row = rows[i] ?? [];
+      const textCells = row.filter((c) => !looksLikeData(c) && String(c ?? "").trim()).length;
+      return textCells;
+    });
+    bestRow = scores[0] >= scores[1] ? 0 : 1;
+  }
+
+  return bestRow;
+}
+
+function rawToObjects(rows: unknown[][], headerIdx: number): Record<string, unknown>[] {
+  const rawHeaders = rows[headerIdx] ?? [];
+  // Garante unicidade de keys (colunas duplicadas ficam com sufixo)
+  const seen: Record<string, number> = {};
+  const headers = rawHeaders.map((h) => {
+    const key = String(h ?? "").trim() || `__col`;
+    const count = seen[key] ?? 0;
+    seen[key] = count + 1;
+    return count === 0 ? key : `${key}_${count}`;
+  });
+
+  const result: Record<string, unknown>[] = [];
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.every((c) => c === "" || c === null || c === undefined)) continue;
+    const obj: Record<string, unknown> = {};
+    headers.forEach((h, idx) => { obj[h] = row[idx] ?? ""; });
+    result.push(obj);
+  }
+  return result;
 }
 
 // ── Leitura de arquivo ────────────────────────────────────────────────────────
@@ -62,7 +163,7 @@ function readWorkbook(file: File): Promise<XLSX.WorkBook> {
         const wb = XLSX.read(e.target?.result, { type: "binary", cellDates: true });
         resolve(wb);
       } catch (err) {
-        reject(new Error("Não foi possível abrir o arquivo. Verifique se não está protegido por senha."));
+        reject(new Error("Não foi possível abrir o arquivo. Verifique se não está protegido."));
       }
     };
     reader.onerror = () => reject(new Error("Erro ao ler o arquivo"));
@@ -70,11 +171,7 @@ function readWorkbook(file: File): Promise<XLSX.WorkBook> {
   });
 }
 
-/**
- * Lê o arquivo e retorna linhas brutas como arrays de strings (sem assumir header).
- * Para CSV detecta separador automático.
- */
-async function fileToRawRows(file: File): Promise<{ raw: unknown[][]; wb: XLSX.WorkBook }> {
+async function fileToRawRows(file: File): Promise<unknown[][]> {
   const lower = file.name.toLowerCase();
   let wb: XLSX.WorkBook;
 
@@ -87,62 +184,7 @@ async function fileToRawRows(file: File): Promise<{ raw: unknown[][]; wb: XLSX.W
   }
 
   const ws = wb.Sheets[wb.SheetNames[0]];
-  // header: 1 → retorna array de arrays (sem interpretar header)
-  const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: "" });
-  return { raw, wb };
-}
-
-/**
- * Varre as primeiras N linhas para encontrar aquela que contém
- * a maior quantidade de palavras-chave conhecidas — essa é o header real.
- * Retorna o índice da linha de cabeçalho encontrada.
- */
-function detectHeaderRow(
-  rows: unknown[][],
-  keywords: string[],
-  maxScan = 15
-): number {
-  let bestRow = 0;
-  let bestScore = 0;
-
-  for (let i = 0; i < Math.min(rows.length, maxScan); i++) {
-    const row = rows[i];
-    let score = 0;
-    for (const cell of row) {
-      if (keywords.some((kw) => matches(cell, kw))) score++;
-    }
-    if (score > bestScore) {
-      bestScore = score;
-      bestRow = i;
-    }
-  }
-
-  return bestRow;
-}
-
-/**
- * Converte o array bruto em array de objetos usando a linha `headerIdx` como chave.
- */
-function rawToObjects(
-  rows: unknown[][],
-  headerIdx: number
-): Record<string, unknown>[] {
-  const headers = rows[headerIdx].map((h) => String(h ?? "").trim());
-  const result: Record<string, unknown>[] = [];
-
-  for (let i = headerIdx + 1; i < rows.length; i++) {
-    const row = rows[i];
-    // Pula linhas completamente vazias
-    if (row.every((cell) => cell === "" || cell === null || cell === undefined)) continue;
-
-    const obj: Record<string, unknown> = {};
-    headers.forEach((h, idx) => {
-      obj[h || `__col_${idx}`] = row[idx] ?? "";
-    });
-    result.push(obj);
-  }
-
-  return result;
+  return XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: "" });
 }
 
 // ── Helper tamanho (Space) ────────────────────────────────────────────────────
@@ -156,51 +198,43 @@ function extractSize(s: string): string {
 
 // ── ERP Parser (Space / VTEX) ─────────────────────────────────────────────────
 
-// Keywords para detectar linha de header do ERP
+// Keywords específicas para ERP — sem "id", "cod" (muito genéricos)
 const ERP_HEADER_KEYWORDS = [
-  "sku", "ref", "refid", "codigo", "cod", "id",
-  "nome", "produto", "descricao",
-  "estoque", "saldo", "qtd", "quantidade", "disponivel", "total",
+  "nome", "produto", "descricao", "descri",
+  "sku", "refid", "ref id",
+  "estoque", "saldo", "disponivel", "quantidade total",
 ];
 
 export async function parseErpXlsx(
   file: File
 ): Promise<{ data: Record<string, number>; diag: ParseDiagnostic }> {
-  const { raw } = await fileToRawRows(file);
+  const raw = await fileToRawRows(file);
 
-  if (raw.length === 0) {
-    return { data: {}, diag: emptyDiag() };
-  }
+  if (raw.length === 0) return { data: {}, diag: emptyDiag() };
 
   const headerIdx = detectHeaderRow(raw, ERP_HEADER_KEYWORDS);
   const rows = rawToObjects(raw, headerIdx);
 
-  console.log(`[ERP Parser] Arquivo: ${file.name}`);
-  console.log(`[ERP Parser] Header detectado na linha ${headerIdx + 1}:`, raw[headerIdx]);
-  console.log(`[ERP Parser] Total de linhas de dados: ${rows.length}`);
+  console.log(`[ERP Parser] Arquivo: ${file.name} | Header linha ${headerIdx + 1}`);
+  console.log(`[ERP Parser] Colunas:`, Object.keys(rows[0] ?? {}));
 
-  if (rows.length === 0) {
-    return { data: {}, diag: emptyDiag() };
-  }
+  if (rows.length === 0) return { data: {}, diag: emptyDiag() };
 
   const firstRow = rows[0];
   const allCols = Object.keys(firstRow);
 
-  // Detecta colunas de SKU, nome e estoque
   const skuCol = findCol(firstRow,
-    "sku", "refid", "ref id", "ref ", "codigo", "cód", "cod ", "referencia",
-    "id produto", "id_produto", "product id"
+    "sku", "refid", "ref id", "ref.", "referencia", "codigo", "cód",
+    "cod.", "id produto", "id sku"
   );
   const nomeCol = findCol(firstRow,
-    "nome", "produto", "descricao", "descri", "titulo", "name", "product"
+    "nome", "produto", "descricao", "titulo", "name", "product"
   );
   const qtyCol = findCol(firstRow,
-    "estoque", "saldo", "disponivel", "qtd ", "quantidade", "total",
-    "stock", "inventory", "qty"
+    "estoque", "saldo", "disponivel", "quantidade", "total", "stock", "qty", "qtd"
   );
 
-  console.log(`[ERP Parser] SKU col: "${skuCol}" | Nome col: "${nomeCol}" | Qty col: "${qtyCol}"`);
-  console.log("[ERP Parser] Todas as colunas:", allCols);
+  console.log(`[ERP Parser] SKU="${skuCol}" | Nome="${nomeCol}" | Qty="${qtyCol}"`);
 
   const data: Record<string, number> = {};
   let validRows = 0;
@@ -208,13 +242,10 @@ export async function parseErpXlsx(
   for (const row of rows) {
     const skuRaw = skuCol ? String(row[skuCol] ?? "").trim() : "";
     const nome = nomeCol ? String(row[nomeCol] ?? "").trim() : "";
-    const qty = qtyCol
-      ? parseFloat(String(row[qtyCol] ?? "0").replace(",", "."))
-      : 0;
+    const qty = qtyCol ? parseFloat(String(row[qtyCol] ?? "0").replace(",", ".")) : 0;
 
     if (!skuRaw) continue;
 
-    // Tenta normalizar SKU com tamanho (padrão Space)
     const size = nome ? extractSize(nome) : extractSize(skuRaw);
     const base = skuRaw.replace(/[-_]?\d+$/, "").replace(/\s+/g, " ").trim();
     const sku = size && !base.toUpperCase().includes(size) ? `${base} ${size}` : skuRaw;
@@ -227,65 +258,54 @@ export async function parseErpXlsx(
 
   return {
     data,
-    diag: {
-      totalRows: raw.length,
-      validRows,
-      headerRowIndex: headerIdx,
-      detectedColumns: allCols,
-      skuColumn: skuCol,
-      qtyColumn: qtyCol,
-      descColumn: nomeCol,
-    },
+    diag: { totalRows: raw.length, validRows, headerRowIndex: headerIdx, detectedColumns: allCols, skuColumn: skuCol, qtyColumn: qtyCol, descColumn: nomeCol },
   };
 }
 
 // ── MeLi Parser ───────────────────────────────────────────────────────────────
 
-// Keywords para detectar linha de header do MeLi
+// Keywords específicas MeLi — termos completos, não substrings genéricas
 const MELI_HEADER_KEYWORDS = [
-  "sku", "vendedor", "seller", "anuncio", "titulo", "title",
-  "quantidade", "disponivel", "stock", "estoque", "preco", "status",
-  "id", "mlb", "cod",
+  // SKU
+  "sku do vendedor", "seller sku", "sku vendedor", "sku",
+  // Título
+  "titulo do anuncio", "titulo", "title",
+  // Quantidade
+  "quantidade disponivel", "estoque disponivel", "disponivel", "quantidade",
+  // Outros campos típicos do export MeLi
+  "status", "preco", "variacao", "categoria", "anuncio",
 ];
 
 export async function parseMeliXlsx(
   file: File
 ): Promise<{ data: Record<string, { qty: number; desc: string }>; diag: ParseDiagnostic }> {
-  const { raw } = await fileToRawRows(file);
+  const raw = await fileToRawRows(file);
 
-  if (raw.length === 0) {
-    return { data: {}, diag: emptyDiag() };
-  }
+  if (raw.length === 0) return { data: {}, diag: emptyDiag() };
 
   const headerIdx = detectHeaderRow(raw, MELI_HEADER_KEYWORDS);
   const rows = rawToObjects(raw, headerIdx);
 
-  console.log(`[MeLi Parser] Arquivo: ${file.name}`);
-  console.log(`[MeLi Parser] Header detectado na linha ${headerIdx + 1}:`, raw[headerIdx]);
-  console.log(`[MeLi Parser] Total de linhas de dados: ${rows.length}`);
+  console.log(`[MeLi Parser] Arquivo: ${file.name} | Header linha ${headerIdx + 1}`);
+  console.log(`[MeLi Parser] Colunas detectadas:`, Object.keys(rows[0] ?? {}));
 
-  if (rows.length === 0) {
-    return { data: {}, diag: emptyDiag() };
-  }
+  if (rows.length === 0) return { data: {}, diag: emptyDiag() };
 
   const firstRow = rows[0];
   const allCols = Object.keys(firstRow);
 
-  // MeLi BR: "SKU do vendedor", "Código do anúncio", "Título do anúncio", "Quantidade disponível"
   const skuCol = findCol(firstRow,
-    "sku do vendedor", "seller sku", "sku vendedor",
-    "sku", "cod", "referencia", "codigo", "ref"
+    "sku do vendedor", "seller sku", "sku vendedor", "sku", "referencia", "codigo"
   );
   const descCol = findCol(firstRow,
-    "titulo do anuncio", "titulo", "title", "nome", "descricao", "produto", "anuncio"
+    "titulo do anuncio", "titulo", "title", "nome", "descricao", "anuncio"
   );
   const qtyCol = findCol(firstRow,
-    "quantidade disponivel", "disponivel", "quantidade",
-    "estoque", "stock", "qty", "available", "saldo"
+    "quantidade disponivel", "estoque disponivel", "disponivel",
+    "quantidade", "estoque", "stock", "qty", "saldo"
   );
 
-  console.log(`[MeLi Parser] SKU col: "${skuCol}" | Desc col: "${descCol}" | Qty col: "${qtyCol}"`);
-  console.log("[MeLi Parser] Todas as colunas:", allCols);
+  console.log(`[MeLi Parser] SKU="${skuCol}" | Desc="${descCol}" | Qty="${qtyCol}"`);
 
   const data: Record<string, { qty: number; desc: string }> = {};
   let validRows = 0;
@@ -293,9 +313,7 @@ export async function parseMeliXlsx(
   for (const row of rows) {
     const sku = skuCol ? String(row[skuCol] ?? "").trim() : "";
     const desc = descCol ? String(row[descCol] ?? "").trim() : "";
-    const qty = qtyCol
-      ? parseFloat(String(row[qtyCol] ?? "0").replace(",", "."))
-      : 0;
+    const qty = qtyCol ? parseFloat(String(row[qtyCol] ?? "0").replace(",", ".")) : 0;
 
     if (!sku) continue;
 
@@ -307,15 +325,7 @@ export async function parseMeliXlsx(
 
   return {
     data,
-    diag: {
-      totalRows: raw.length,
-      validRows,
-      headerRowIndex: headerIdx,
-      detectedColumns: allCols,
-      skuColumn: skuCol,
-      qtyColumn: qtyCol,
-      descColumn: descCol,
-    },
+    diag: { totalRows: raw.length, validRows, headerRowIndex: headerIdx, detectedColumns: allCols, skuColumn: skuCol, qtyColumn: qtyCol, descColumn: descCol },
   };
 }
 
@@ -354,8 +364,5 @@ export function mergeData(
 // ── Utils ─────────────────────────────────────────────────────────────────────
 
 function emptyDiag(): ParseDiagnostic {
-  return {
-    totalRows: 0, validRows: 0, headerRowIndex: 0,
-    detectedColumns: [], skuColumn: null, qtyColumn: null, descColumn: null,
-  };
+  return { totalRows: 0, validRows: 0, headerRowIndex: 0, detectedColumns: [], skuColumn: null, qtyColumn: null, descColumn: null };
 }
