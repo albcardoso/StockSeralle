@@ -103,47 +103,61 @@ function scoreHeaderRow(row: unknown[], keywords: string[]): number {
   return score;
 }
 
-function detectHeaderRow(rows: unknown[][], keywords: string[], maxScan = 20): number {
+function detectHeaderRow(rows: unknown[][], keywords: string[], maxScan?: number): number {
+  // Escaneia todas as linhas (sem limite fixo) para encontrar o header real
+  const limit = maxScan ?? rows.length;
   let bestRow = 0;
   let bestScore = -Infinity;
 
-  for (let i = 0; i < Math.min(rows.length, maxScan); i++) {
+  for (let i = 0; i < Math.min(rows.length, limit); i++) {
     const s = scoreHeaderRow(rows[i], keywords);
-    console.log(`[detectHeader] linha ${i + 1} score=${s.toFixed(2)}`, rows[i]?.slice(0, 5));
+    // Só loga as primeiras 30 linhas para não poluir demais o console
+    if (i < 30) {
+      console.log(`[detectHeader] linha ${i + 1} score=${s.toFixed(2)}`, rows[i]?.slice(0, 6));
+    }
     if (s > bestScore) {
       bestScore = s;
       bestRow = i;
     }
   }
 
-  // Fallback: se o melhor score ainda é <= 0, tenta linha 0 ou 1
+  console.log(`[detectHeader] Melhor: linha ${bestRow + 1} score=${bestScore.toFixed(2)}`);
+  console.log(`[detectHeader] Conteúdo completo da linha vencedora:`, rows[bestRow]);
+
+  // Fallback: se o melhor score ainda é <= 0, o arquivo provavelmente NÃO tem linha de header
+  // Retorna -1 para sinalizar "sem header"
   if (bestScore <= 0) {
-    console.warn("[detectHeader] Score baixo, tentando linha 1 ou 2 como fallback");
-    // Prefere linha com mais células não-numéricas
-    const scores = [0, 1].map((i) => {
-      const row = rows[i] ?? [];
-      const textCells = row.filter((c) => !looksLikeData(c) && String(c ?? "").trim()).length;
-      return textCells;
-    });
-    bestRow = scores[0] >= scores[1] ? 0 : 1;
+    console.warn("[detectHeader] Nenhuma linha de header encontrada (score <= 0). Arquivo sem cabeçalho?");
+    return -1;
   }
 
   return bestRow;
 }
 
-function rawToObjects(rows: unknown[][], headerIdx: number): Record<string, unknown>[] {
-  const rawHeaders = rows[headerIdx] ?? [];
+function rawToObjects(rows: unknown[][], headerIdx: number, syntheticHeaders?: string[]): Record<string, unknown>[] {
+  // headerIdx = -1 → sem linha de header, usa syntheticHeaders ou índices numéricos
+  const rawHeaders = headerIdx >= 0 ? (rows[headerIdx] ?? []) : (syntheticHeaders ?? []);
+  const dataStartIdx = headerIdx >= 0 ? headerIdx + 1 : 0;
+
   // Garante unicidade de keys (colunas duplicadas ficam com sufixo)
   const seen: Record<string, number> = {};
-  const headers = rawHeaders.map((h) => {
-    const key = String(h ?? "").trim() || `__col`;
+  const numCols = headerIdx >= 0
+    ? rawHeaders.length
+    : (rows[0]?.length ?? 0);
+
+  const headers: string[] = [];
+  for (let i = 0; i < numCols; i++) {
+    const raw = rawHeaders[i];
+    const key = (raw !== undefined && raw !== null && String(raw).trim())
+      ? String(raw).trim()
+      : `__col${i}`;
     const count = seen[key] ?? 0;
     seen[key] = count + 1;
-    return count === 0 ? key : `${key}_${count}`;
-  });
+    headers.push(count === 0 ? key : `${key}_${count}`);
+  }
 
   const result: Record<string, unknown>[] = [];
-  for (let i = headerIdx + 1; i < rows.length; i++) {
+  for (let i = dataStartIdx; i < rows.length; i++) {
     const row = rows[i];
     if (!row || row.every((c) => c === "" || c === null || c === undefined)) continue;
     const obj: Record<string, unknown> = {};
@@ -160,14 +174,16 @@ function readWorkbook(file: File): Promise<XLSX.WorkBook> {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const wb = XLSX.read(e.target?.result, { type: "binary", cellDates: true });
+        // Usa ArrayBuffer para evitar "Bad uncompressed size" do readAsBinaryString
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const wb = XLSX.read(data, { type: "array", cellDates: true });
         resolve(wb);
       } catch (err) {
         reject(new Error("Não foi possível abrir o arquivo. Verifique se não está protegido."));
       }
     };
     reader.onerror = () => reject(new Error("Erro ao ler o arquivo"));
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
   });
 }
 
@@ -213,6 +229,10 @@ export async function parseErpXlsx(
   if (raw.length === 0) return { data: {}, diag: emptyDiag() };
 
   const headerIdx = detectHeaderRow(raw, ERP_HEADER_KEYWORDS);
+  if (headerIdx === -1) {
+    console.error(`[ERP Parser] Nenhum header encontrado em ${file.name}`);
+    return { data: {}, diag: emptyDiag() };
+  }
   const rows = rawToObjects(raw, headerIdx);
 
   console.log(`[ERP Parser] Arquivo: ${file.name} | Header linha ${headerIdx + 1}`);
@@ -276,6 +296,24 @@ const MELI_HEADER_KEYWORDS = [
   "status", "preco", "variacao", "categoria", "anuncio",
 ];
 
+// Mapeamento de posição de coluna para o formato MeLi sem header
+// (usado como fallback quando nenhum header é detectado)
+// Baseado no formato padrão de export "Gerenciador de Anúncios" MeLi BR
+const MELI_FALLBACK_COLS = [
+  "__col0",       // 0  → algum flag interno
+  "__col1",       // 1  → algum flag interno
+  "preco",        // 2  → preço ou ID
+  "sku",          // 3  → SKU do Vendedor
+  "ean",          // 4  → EAN / Código de barras
+  "id_anuncio",   // 5  → ID do anúncio (número)
+  "id_longo",     // 6  → ID longo interno
+  "titulo",       // 7  → Título do anúncio
+  "variacao",     // 8  → Variação (tamanho/cor)
+  "categoria",    // 9  → Categoria
+  "status",       // 10 → Status (Ativo/Pausado)
+  "tem_variacao", // 11 → Tem variação? (Não/Sim)
+];
+
 export async function parseMeliXlsx(
   file: File
 ): Promise<{ data: Record<string, { qty: number; desc: string }>; diag: ParseDiagnostic }> {
@@ -283,10 +321,23 @@ export async function parseMeliXlsx(
 
   if (raw.length === 0) return { data: {}, diag: emptyDiag() };
 
-  const headerIdx = detectHeaderRow(raw, MELI_HEADER_KEYWORDS);
-  const rows = rawToObjects(raw, headerIdx);
+  // Log diagnóstico: primeiras 3 linhas completas
+  console.log(`[MeLi Parser] Arquivo: ${file.name} | ${raw.length} linhas`);
+  console.log(`[MeLi Parser] raw[0] completo:`, raw[0]);
+  console.log(`[MeLi Parser] raw[1] completo:`, raw[1]);
 
-  console.log(`[MeLi Parser] Arquivo: ${file.name} | Header linha ${headerIdx + 1}`);
+  const headerIdx = detectHeaderRow(raw, MELI_HEADER_KEYWORDS);
+
+  let rows: Record<string, unknown>[];
+  if (headerIdx === -1) {
+    // Sem header detectado → usa mapeamento por posição de coluna
+    console.warn(`[MeLi Parser] Usando mapeamento por posição (sem header detectado)`);
+    rows = rawToObjects(raw, -1, MELI_FALLBACK_COLS);
+  } else {
+    rows = rawToObjects(raw, headerIdx);
+  }
+
+  console.log(`[MeLi Parser] Header linha ${headerIdx === -1 ? "N/A (posição)" : headerIdx + 1}`);
   console.log(`[MeLi Parser] Colunas detectadas:`, Object.keys(rows[0] ?? {}));
 
   if (rows.length === 0) return { data: {}, diag: emptyDiag() };
