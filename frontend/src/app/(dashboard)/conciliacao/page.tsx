@@ -7,7 +7,7 @@ import ConciliacaoTable from "@/components/features/conciliacao/ConciliacaoTable
 import type { ConciliacaoItem } from "@/types";
 
 export default function ConciliacaoPage() {
-  const { conciliacao, erpFileName, meliFileName, clearAll } = useStock();
+  const { conciliacao, erpFileName, vtexFileName, meliFileName, clearAll } = useStock();
   const router = useRouter();
   const [filter, setFilter] = useState<"all" | "div" | "ok" | "erp-only" | "meli-only">("all");
   const [search, setSearch] = useState("");
@@ -48,12 +48,12 @@ export default function ConciliacaoPage() {
           </p>
         </div>
 
-        {/* Guia de importação */}
-        <div className="grid-2col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 20 }}>
+        {/* Guia de importação — 3 passos */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 20 }}>
           <StepCard
             step={1}
-            title="Importe o ERP"
-            description="Space ou VTEX"
+            title="Importe o Space (ERP)"
+            description="CSV de estoque"
             done={!!erpFileName}
             fileName={erpFileName}
             onClick={() => router.push("/importar/space")}
@@ -62,6 +62,16 @@ export default function ConciliacaoPage() {
           />
           <StepCard
             step={2}
+            title="Importe a VTEX"
+            description="Mapeamento SKU → ERP"
+            done={!!vtexFileName}
+            fileName={vtexFileName}
+            onClick={() => router.push("/importar/vtex")}
+            color="var(--purple)"
+            bg="var(--purple-bg)"
+          />
+          <StepCard
+            step={3}
             title="Importe o MeLi"
             description="Gerenciador de Anúncios"
             done={!!meliFileName}
@@ -73,7 +83,7 @@ export default function ConciliacaoPage() {
         </div>
 
         <div style={{ background: "var(--blue-bg)", border: "1px solid var(--blue-border)", borderRadius: 10, padding: "12px 16px", fontSize: 13, color: "var(--blue)" }}>
-          ℹ️ Importe os dois arquivos para ver a conciliação completa. Os dados ficam disponíveis em toda a sessão.
+          ℹ️ Importe os 3 arquivos para ver a conciliação completa (Space + VTEX obrigatórios). Os dados ficam disponíveis em toda a sessão.
         </div>
       </div>
     );
@@ -89,6 +99,7 @@ export default function ConciliacaoPage() {
           </h1>
           <div style={{ display: "flex", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
             {erpFileName && <FileBadge label={erpFileName} color="var(--purple)" bg="var(--purple-bg)" />}
+            {vtexFileName && <FileBadge label={vtexFileName} color="var(--purple)" bg="var(--purple-bg)" />}
             {meliFileName && <FileBadge label={meliFileName} color="var(--amber)" bg="var(--amber-bg)" />}
           </div>
         </div>

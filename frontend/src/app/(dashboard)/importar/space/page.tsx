@@ -28,9 +28,11 @@ export default function ImportarSpacePage() {
     <div>
       <PageHeader title="Importar Space (ERP)" description="Importe o relatório de estoque do sistema Space." badge="ERP" badgeColor="var(--purple)" badgeBg="var(--purple-bg)" />
       {erpFileName && <StatusBanner message={`Arquivo atual: ${erpFileName}`} color="var(--purple)" bg="var(--purple-bg)" border="var(--purple-border)" />}
-      <UploadCard title="Planilha Space" description="Arquivo .xlsx ou .csv exportado do Space com SKU/Ref e estoque." icon="□" color="var(--purple)" bg="var(--purple-bg)" onFile={handleFile} />
+      <UploadCard title="Planilha Space" description="Arquivo .csv exportado do Space com CODPRODUTO, ESTOQUE_DISPONIVEL e FILIAL." icon="□" color="var(--purple)" bg="var(--purple-bg)" onFile={handleFile} />
       <FormatHint>
-        <b>Colunas detectadas automaticamente.</b> Se der erro, abra o Console (F12) para ver as colunas encontradas no arquivo.
+        <b>Colunas necessárias:</b> CODPRODUTO · ESTOQUE_DISPONIVEL · FILIAL<br />
+        Apenas a filial <b>98 (Sampa Full)</b> é considerada na conciliação.<br />
+        Após importar o Space, importe também a planilha VTEX (mapeamento) e depois o MeLi.
       </FormatHint>
     </div>
   );
