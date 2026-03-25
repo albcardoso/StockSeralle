@@ -33,12 +33,60 @@ export interface VtexEntry {
   nome_sku: string;
 }
 
+// ── Opções de performance para arquivos grandes ────────────────────────────────
+
+/**
+ * Opções de performance do SheetJS — reduzem uso de memória em ~60-70% para
+ * arquivos grandes como o VTEX (268MB de XML descomprimido, 142 mil linhas).
+ *
+ * Desativam campos computados que NÃO SÃO NECESSÁRIOS para extração de dados:
+ *   cellHTML   — versão HTML de cada célula (dobra memória para células de texto longo)
+ *   cellText   — texto formatado de cada número
+ *   cellFormula — strings de fórmula (nenhum desses arquivos tem fórmulas)
+ *   cellNF     — string de formato de número
+ *   cellStyles — objeto de estilo CSS
+ *
+ * IMPORTANTE: bookSheets OMITIDO (= false por padrão).
+ *   bookSheets: true  → lê APENAS nomes de abas, ignora dados das células
+ *   bookSheets: false → lê os dados normalmente ← queremos isso
+ */
+const PERF_OPTS: XLSX.ParsingOptions = {
+  cellFormula: false,
+  cellHTML:    false,
+  cellText:    false,
+  cellNF:      false,
+  cellStyles:  false,
+  sheetStubs:  false,
+  bookDeps:    false,
+  bookFiles:   false,
+  bookProps:   false,
+  bookVBA:     false,
+  // bookSheets OMITIDO → false → lê dados das células
+};
+
 // ── Leitura de arquivo XLSX ────────────────────────────────────────────────────
 
 /**
- * Lê um arquivo como WorkBook XLSX usando ArrayBuffer (modo primário).
- * Se o workbook retornar vazio (bug de ZIP do xlsx@0.18.5), tenta BinaryString.
- * Nenhuma opção de performance extra — igual ao MVP HTML original.
+ * Retorna true se o workbook contém ao menos uma sheet com dados.
+ * Verifica SheetNames, Sheets E a presença de !ref (indicador de range não vazio).
+ */
+function workbookIsUsable(wb: XLSX.WorkBook): boolean {
+  if (!wb?.SheetNames?.length || !wb.Sheets) return false;
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  // !ref ausente = sheet vazia (comum quando ZIP tem "Bad uncompressed size")
+  return !!(ws && ws["!ref"]);
+}
+
+/**
+ * Lê um arquivo como WorkBook XLSX.
+ *
+ * Modo primário: ArrayBuffer com PERF_OPTS (reduz memória ~60%).
+ * Fallback: BinaryString — contorna o bug de ZIP "Bad uncompressed size"
+ *   que às vezes faz o SheetJS retornar sheet sem dados no modo array.
+ *
+ * O bug de ZIP é silencioso: não lança exceção, apenas retorna workbook
+ * com SheetNames populado mas !ref ausente na sheet. Por isso verificamos
+ * workbookIsUsable() em vez de apenas SheetNames.length.
  */
 function readWorkbook(file: File): Promise<XLSX.WorkBook> {
   return new Promise((resolve, reject) => {
@@ -48,7 +96,7 @@ function readWorkbook(file: File): Promise<XLSX.WorkBook> {
         r.onload = (e) => {
           try {
             const data = new Uint8Array(e.target!.result as ArrayBuffer);
-            res(XLSX.read(data, { type: "array" }));
+            res(XLSX.read(data, { ...PERF_OPTS, type: "array" }));
           } catch (err) {
             rej(err);
           }
@@ -62,7 +110,7 @@ function readWorkbook(file: File): Promise<XLSX.WorkBook> {
         const r = new FileReader();
         r.onload = (e) => {
           try {
-            res(XLSX.read(e.target!.result as string, { type: "binary" }));
+            res(XLSX.read(e.target!.result as string, { ...PERF_OPTS, type: "binary" }));
           } catch (err) {
             rej(err);
           }
@@ -73,15 +121,32 @@ function readWorkbook(file: File): Promise<XLSX.WorkBook> {
 
     tryArray()
       .then((wb) => {
-        // workbook vazio → bug de ZIP → tenta binary
-        if (!wb?.SheetNames?.length) {
-          console.warn("[readWorkbook] ArrayBuffer → workbook vazio, tentando BinaryString");
+        if (!workbookIsUsable(wb)) {
+          console.warn(
+            "[readWorkbook] ArrayBuffer → sheet vazia/!ref ausente — tentando BinaryString"
+          );
           return tryBinary();
         }
         return wb;
       })
-      .catch(() => tryBinary())
-      .then(resolve)
+      .catch(() => {
+        console.warn("[readWorkbook] ArrayBuffer falhou — tentando BinaryString");
+        return tryBinary();
+      })
+      .then((wb) => {
+        if (!workbookIsUsable(wb)) {
+          // Ambos os modos falharam — arquivo muito grande para o browser (ZIP > 268 MB descomprimido)
+          reject(
+            new Error(
+              `Arquivo muito grande para o browser (ZIP com entrada >268 MB). ` +
+              `O servidor Next.js precisa ser reiniciado para ativar a configuração ` +
+              `serverExternalPackages. Pare o 'npm run dev', reinicie e tente novamente.`
+            )
+          );
+        } else {
+          resolve(wb);
+        }
+      })
       .catch(() =>
         reject(
           new Error(
@@ -234,20 +299,129 @@ export async function parseSpaceErp(
  * Dados a partir da linha índice 2 (linhas 0 e 1 são cabeçalho duplo no VTEX).
  * Se o header for detectado em outra posição, usa os índices encontrados.
  */
+/**
+ * Tenta parsear o arquivo VTEX via rota de API do servidor (Node.js).
+ * O Node.js não tem as limitações de memória do browser para ZIP de 268 MB.
+ * Retorna null se a API falhar, para o caller usar o fallback browser.
+ */
+async function parseVtexViaAPI(
+  file: File
+): Promise<{ data: Record<string, VtexEntry>; diag: ParseDiagnostic } | null> {
+  console.log(`[VTEX API] Enviando ${(file.size / 1024 / 1024).toFixed(1)} MB para /api/parse-vtex...`);
+
+  // Lê o arquivo como ArrayBuffer e envia como raw binary.
+  // Mais confiável para arquivos grandes (36 MB) do que FormData multipart.
+  let arrayBuf: ArrayBuffer;
+  try {
+    arrayBuf = await file.arrayBuffer();
+  } catch (err) {
+    console.warn("[VTEX API] Erro ao ler arquivo:", err);
+    return null;
+  }
+
+  const controller = new AbortController();
+  // 3 minutos: arquivo de 36 MB leva ~55s no Node.js
+  const timeoutId = setTimeout(() => controller.abort(), 180_000);
+
+  try {
+    const resp = await fetch("/api/parse-vtex", {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: arrayBuf,
+      signal: controller.signal,
+    });
+
+    console.log(`[VTEX API] Resposta HTTP ${resp.status}`);
+
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => "");
+      console.warn(`[VTEX API] HTTP ${resp.status}:`, body.slice(0, 200));
+      return null;
+    }
+
+    const json = (await resp.json()) as {
+      data?: Record<string, VtexEntry>;
+      totalRows?: number;
+      validRows?: number;
+      error?: string;
+      receivedKB?: number;
+    };
+
+    // Log diagnóstico completo — inclui receivedKB para detectar truncamento do body
+    console.log(
+      `[VTEX API] Servidor respondeu: totalRows=${json.totalRows ?? "?"} validRows=${json.validRows ?? "?"} receivedKB=${json.receivedKB ?? "?"} error=${json.error ?? "nenhum"}`
+    );
+
+    if (json.error) {
+      console.warn(`[VTEX API] Erro do servidor: "${json.error}" | receivedKB=${json.receivedKB ?? "?"} (enviado: ${(file.size / 1024).toFixed(0)} KB)`);
+      return null;
+    }
+
+    const data = json.data ?? {};
+    const validRows = Object.keys(data).length;
+    console.log(`[VTEX Mapping] ✓ ${validRows} SKUs (via servidor Node.js)`);
+
+    return {
+      data,
+      diag: {
+        totalRows:       json.totalRows ?? 0,
+        validRows,
+        headerRowIndex:  1,
+        detectedColumns: ["SKU=col28", "cod_produto=col21", "nome_sku=col24"],
+        skuColumn:       "col28",
+        qtyColumn:       null,
+        descColumn:      "col24",
+      },
+    };
+  } catch (err) {
+    if ((err as Error).name === "AbortError") {
+      console.warn("[VTEX API] Timeout (180s) — tentando browser");
+    } else {
+      console.warn("[VTEX API] Fetch falhou:", err);
+    }
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 export async function parseVtexMapping(
   file: File
 ): Promise<{ data: Record<string, VtexEntry>; diag: ParseDiagnostic }> {
+  // Para arquivos grandes (>2 MB), tenta server-side primeiro.
+  // O decompressor ZIP do SheetJS no browser falha silenciosamente em
+  // arquivos com entradas ZIP de 268 MB (como o vtex.xlsx de 36 MB).
+  if (file.size > 2 * 1024 * 1024) {
+    const apiResult = await parseVtexViaAPI(file);
+    if (apiResult) return apiResult;
+    console.warn("[VTEX Mapping] API falhou — usando fallback browser (pode demorar)");
+  }
+
+  // Fallback: parsing no browser (funciona para arquivos pequenos)
   const wb = await readWorkbook(file);
 
   if (!wb?.SheetNames?.length || !wb.Sheets) {
+    console.error("[VTEX Mapping] Workbook inválido — SheetNames ou Sheets ausente");
     return { data: {}, diag: emptyDiag() };
   }
 
+  console.log("[VTEX Mapping] SheetNames:", wb.SheetNames);
+
   const ws = wb.Sheets[wb.SheetNames[0]];
-  if (!ws) return { data: {}, diag: emptyDiag() };
+  if (!ws) {
+    console.error("[VTEX Mapping] Sheet ausente:", wb.SheetNames[0]);
+    return { data: {}, diag: emptyDiag() };
+  }
+
+  console.log("[VTEX Mapping] Sheet !ref:", ws["!ref"]);
 
   const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: "" });
-  if (raw.length < 3) return { data: {}, diag: emptyDiag() };
+  console.log("[VTEX Mapping] Linhas brutas:", raw.length);
+
+  if (raw.length < 3) {
+    console.error("[VTEX Mapping] Menos de 3 linhas lidas — arquivo pode estar corrompido");
+    return { data: {}, diag: { ...emptyDiag(), totalRows: raw.length } };
+  }
 
   console.log(`[VTEX Mapping] ${raw.length} linhas brutas`);
 

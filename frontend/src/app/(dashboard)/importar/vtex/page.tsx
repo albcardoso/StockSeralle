@@ -1,22 +1,32 @@
 "use client";
 
+import { useState } from "react";
 import UploadCard from "@/components/features/importar/UploadCard";
 import { useStock } from "@/contexts/StockContext";
 import { parseVtexMapping } from "@/lib/xlsx-parser";
 
 export default function ImportarVtexPage() {
   const { setVtexData, vtexFileName } = useStock();
+  const [processingMsg, setProcessingMsg] = useState<string | null>(null);
 
   async function handleFile(file: File) {
+    setProcessingMsg("Enviando arquivo para o servidor...");
+
+    // Pequeno delay para a mensagem renderizar
+    await new Promise((r) => setTimeout(r, 100));
+
+    setProcessingMsg(`Processando ${(file.size / 1024 / 1024).toFixed(1)} MB no servidor (aguarde ~60s)...`);
+
     const { data, diag } = await parseVtexMapping(file);
+    setProcessingMsg(null);
 
     console.log("[ImportarVtex] Diagnóstico:", diag);
 
     if (Object.keys(data).length === 0) {
       const detail =
         diag.totalRows > 0
-          ? `\n\n${diag.totalRows} linhas lidas.\nColunas usadas: ${diag.detectedColumns.join(", ")}`
-          : "\n\nArquivo parece vazio ou sem linhas válidas.";
+          ? `\n\n${diag.totalRows} linhas lidas.\nColunas: ${diag.detectedColumns.join(", ")}`
+          : "\n\nArquivo parece vazio ou sem linhas válidas.\n\nSe o erro persistir, verifique o Console (F12) para detalhes.";
 
       throw new Error(`Nenhum SKU extraído do mapeamento VTEX.${detail}`);
     }
@@ -46,6 +56,18 @@ export default function ImportarVtexPage() {
         />
       )}
 
+      {processingMsg && (
+        <div style={{
+          background: "var(--blue-bg)", border: "1px solid var(--blue-border)",
+          borderRadius: 8, padding: "12px 16px", marginBottom: 16,
+          fontSize: 13, color: "var(--blue)", fontFamily: "DM Mono, monospace",
+          display: "flex", alignItems: "center", gap: 10,
+        }}>
+          <span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⏳</span>
+          {processingMsg}
+        </div>
+      )}
+
       <UploadCard
         title="Planilha VTEX"
         description="Export de produtos/SKUs da VTEX (.xlsx). Usado para mapear SKU do MeLi → Código do Produto do ERP."
@@ -56,11 +78,12 @@ export default function ImportarVtexPage() {
       />
 
       <FormatHint>
-        <b>Colunas utilizadas (fixas, igual ao MVP):</b><br />
+        <b>Colunas utilizadas (fixas):</b><br />
         Col 22 (índice 21) = Código de referência do produto &nbsp;·&nbsp;
         Col 25 (índice 24) = Nome do SKU &nbsp;·&nbsp;
         Col 29 (índice 28) = Código de referência do SKU<br />
-        Dados a partir da linha 3. Arquivo de ~35 MB pode levar alguns segundos para processar.
+        Dados a partir da linha 3.<br />
+        <b>⏳ Arquivo de ~35 MB:</b> o processamento ocorre no servidor e pode levar <b>60–90 segundos</b>. Aguarde a barra de progresso completar.
       </FormatHint>
     </div>
   );
