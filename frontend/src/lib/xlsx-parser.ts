@@ -41,6 +41,23 @@ function findCol(obj: Record<string, unknown>, ...keywords: string[]): string | 
   return null;
 }
 
+/**
+ * Valida que a coluna detectada contém valores numéricos (não booleanos/texto).
+ * Evita falsos positivos como "Mostrar quando estiver fora de estoque" (True/False).
+ */
+function findNumericCol(rows: Record<string, unknown>[], ...keywords: string[]): string | null {
+  if (rows.length === 0) return null;
+  const candidate = findCol(rows[0], ...keywords);
+  if (!candidate) return null;
+  for (const row of rows.slice(0, 10)) {
+    const v = String(row[candidate] ?? "").trim().toLowerCase();
+    if (!v) continue;
+    if (v === "true" || v === "false" || v === "sim" || v === "não" || v === "nao") return null;
+    if (!isNaN(parseFloat(v.replace(",", ".")))) return candidate;
+  }
+  return null;
+}
+
 // ── Detecção de linha de header ───────────────────────────────────────────────
 
 /** Retorna true se a célula parece um VALOR de dado, não um nome de coluna */
@@ -157,38 +174,179 @@ function rawToObjects(rows: unknown[][], headerIdx: number, syntheticHeaders?: s
 
 // ── Leitura de arquivo ────────────────────────────────────────────────────────
 
-function readWorkbook(file: File): Promise<XLSX.WorkBook> {
+/** Opções de performance: desliga tudo que não usamos nos dados de conciliação */
+const XLSX_PERF_OPTS: XLSX.ParsingOptions = {
+  cellDates:    false,
+  cellFormula:  false,
+  cellHTML:     false,
+  cellText:     false,
+  cellNF:       false,
+  cellStyles:   false,
+  sheetStubs:   false,
+  bookDeps:     false,
+  bookFiles:    false,
+  bookProps:    false,
+  bookSheets:   true,
+  bookVBA:      false,
+};
+
+/**
+ * Retorna true se o workbook tem dados reais (pelo menos 1 linha além do header).
+ * Usa o !ref da sheet (rápido, sem parsear todas as células).
+ */
+function workbookHasData(wb: XLSX.WorkBook): boolean {
+  if (!wb.SheetNames.length) return false;
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  if (!ws || !ws["!ref"]) return false;
+  try {
+    const range = XLSX.utils.decode_range(ws["!ref"]);
+    return range.e.r > 0; // mais de 1 linha
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Leitura de workbook com dois modos: array (default) e binary.
+ *
+ * `binaryFirst: true` — usa BinaryString como modo primário.
+ * Necessário para arquivos cujo ZIP tem entradas com "Bad uncompressed size":
+ * o caminho array retorna linhas mas com células corrompidas; o binary contorna
+ * o mesmo bug e retorna os dados completos.
+ *
+ * Usado por parseMeliXlsx (arquivos MeLi Full têm esse problema no xlsx@0.18.5).
+ */
+function readWorkbook(file: File, opts?: { binaryFirst?: boolean }): Promise<XLSX.WorkBook> {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        // Usa ArrayBuffer para evitar "Bad uncompressed size" do readAsBinaryString
-        const data = new Uint8Array(e.target?.result as ArrayBuffer);
-        const wb = XLSX.read(data, { type: "array", cellDates: true });
-        resolve(wb);
-      } catch (err) {
-        reject(new Error("Não foi possível abrir o arquivo. Verifique se não está protegido."));
-      }
+    const tryArrayBuffer = () =>
+      new Promise<XLSX.WorkBook>((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const data = new Uint8Array(e.target?.result as ArrayBuffer);
+            res(XLSX.read(data, { ...XLSX_PERF_OPTS, type: "array" }));
+          } catch (err) { rej(err); }
+        };
+        reader.onerror = () => rej(new Error("Erro ao ler o arquivo"));
+        reader.readAsArrayBuffer(file);
+      });
+
+    const tryBinaryString = () =>
+      new Promise<XLSX.WorkBook>((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            res(XLSX.read(e.target?.result as string, { ...XLSX_PERF_OPTS, type: "binary" }));
+          } catch (err) { rej(err); }
+        };
+        reader.onerror = () => rej(new Error("Erro ao ler o arquivo"));
+        reader.readAsBinaryString(file);
+      });
+
+    const primary   = opts?.binaryFirst ? tryBinaryString : tryArrayBuffer;
+    const secondary = opts?.binaryFirst ? tryArrayBuffer  : tryBinaryString;
+
+    primary()
+      .then((wb) => {
+        if (!workbookHasData(wb)) {
+          console.warn("[readWorkbook] modo primário retornou sheet vazia — tentando fallback");
+          return secondary().catch(() => wb);
+        }
+        return wb;
+      })
+      .catch(() => secondary())
+      .then(resolve)
+      .catch(() => reject(new Error("Não foi possível abrir o arquivo. Verifique se não está protegido.")));
+  });
+}
+
+/**
+ * Faz o parsing de um arquivo XLSX em um Web Worker (thread separada).
+ *
+ * Fluxo:
+ *  1. Lê o arquivo como ArrayBuffer na thread principal (rápido, não bloqueia)
+ *  2. Transfere o buffer (zero-copy) para o worker — UI continua responsiva
+ *  3. Worker parseia com XLSX + opções de performance (sem estilos/fórmulas)
+ *  4. Se o worker retornar vazio (bug "Bad uncompressed size" do xlsx@0.18.5),
+ *     lê o arquivo novamente como BinaryString e reenvia para o worker
+ */
+function parseXlsxViaWorker(file: File): Promise<unknown[][]> {
+  return new Promise((resolve, reject) => {
+    // Cria worker — webpack/Next.js bundla automaticamente com o padrão new URL
+    const worker = new Worker(
+      new URL("../workers/xlsx.worker.ts", import.meta.url)
+    );
+
+    let settled = false;
+    const done = (rows: unknown[][]) => {
+      if (settled) return;
+      settled = true;
+      worker.terminate();
+      resolve(rows);
     };
-    reader.onerror = () => reject(new Error("Erro ao ler o arquivo"));
-    reader.readAsArrayBuffer(file);
+    const fail = (msg: string) => {
+      if (settled) return;
+      settled = true;
+      worker.terminate();
+      reject(new Error(msg));
+    };
+
+    // Leitura como BinaryString (fallback para bug de ZIP do xlsx)
+    const tryBinary = () => {
+      const r2 = new FileReader();
+      r2.onload = (ev) => {
+        worker.postMessage({ type: "binary", binary: ev.target?.result as string });
+      };
+      r2.onerror = () => fail("Erro ao ler arquivo (binary)");
+      r2.readAsBinaryString(file);
+    };
+
+    worker.onmessage = (e) => {
+      const msg = e.data as
+        | { ok: true; rows: unknown[][]; empty: boolean }
+        | { ok: false; error: string };
+
+      if (!msg.ok) {
+        // Worker lançou exceção → tenta binary antes de desistir
+        tryBinary();
+        return;
+      }
+      if (msg.empty) {
+        // Workbook vazio = bug de ZIP interno do xlsx — usa binary
+        console.warn("[xlsx-worker] ArrayBuffer vazio — tentando BinaryString");
+        tryBinary();
+        return;
+      }
+      done(msg.rows);
+    };
+
+    worker.onerror = () => fail("Erro inesperado no worker de parsing");
+
+    // Leitura como ArrayBuffer (tentativa principal)
+    const r1 = new FileReader();
+    r1.onload = (ev) => {
+      const buf = ev.target?.result as ArrayBuffer;
+      worker.postMessage({ type: "array", buffer: buf }, [buf]); // transferível
+    };
+    r1.onerror = () => fail("Erro ao ler arquivo");
+    r1.readAsArrayBuffer(file);
   });
 }
 
 async function fileToRawRows(file: File): Promise<unknown[][]> {
   const lower = file.name.toLowerCase();
-  let wb: XLSX.WorkBook;
 
+  // CSV: rápido, não precisa de worker
   if (lower.endsWith(".csv")) {
     const text = await file.text();
     const sep = text.includes(";") ? ";" : ",";
-    wb = XLSX.read(text, { type: "string", FS: sep });
-  } else {
-    wb = await readWorkbook(file);
+    const wb = XLSX.read(text, { type: "string", FS: sep });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    return XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: "" });
   }
 
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  return XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: "" });
+  // XLSX/XLS: usa worker para não bloquear a UI
+  return parseXlsxViaWorker(file);
 }
 
 // ── Helper tamanho (Space) ────────────────────────────────────────────────────
@@ -228,17 +386,30 @@ export async function parseErpXlsx(
   const firstRow = rows[0];
   const allCols = Object.keys(firstRow);
 
+  // Prioridades VTEX: "Código de referência do SKU" (col28) > "ID do SKU" (col23)
+  // Prioridades Space/ERP: "codproduto" / "refid"
+  // "referencia do sku" primeiro para não capturar "referencia do produto" (col21 do VTEX)
   const skuCol = findCol(firstRow,
-    "codproduto", "sku", "refid", "ref id", "referencia", "codigo", "cód", "cod.", "id produto", "id sku"
+    "codproduto",
+    "referencia do sku",   // VTEX: "Código de referência do SKU"
+    "cod ref sku", "ref do sku", "codigo de referencia do sku",
+    "sku", "refid", "ref id",
+    "referencia", "codigo", "cód", "cod.", "id produto", "id sku"
   );
   const nomeCol = findCol(firstRow,
     "nome", "produto", "descricao", "titulo", "name", "product"
   );
-  const qtyCol = findCol(firstRow,
+  const qtyCol = findNumericCol(rows,
     "estoque", "saldo", "disponivel", "quantidade", "total", "stock", "qty", "qtd"
   );
+  // Coluna "SKU ativo" usada como fallback quando não há coluna de estoque (ex: export catálogo VTEX)
+  const skuAtivoCol = !qtyCol ? findCol(firstRow, "sku ativo", "ativo", "active") : null;
   // Filial: MVP HTML filtra apenas filial '98' (Sampa Full)
   const filialCol = findCol(firstRow, "filial", "loja", "cod_filial", "codfilial");
+
+  if (!qtyCol) {
+    console.warn(`[ERP Parser] Coluna de estoque não encontrada em ${file.name}. Usando qty=1 para cada SKU ativo.`);
+  }
 
   const data: Record<string, number> = {};
   let validRows = 0;
@@ -251,12 +422,21 @@ export async function parseErpXlsx(
     }
 
     const skuRaw = skuCol ? String(row[skuCol] ?? "").trim() : "";
-    const nome = nomeCol ? String(row[nomeCol] ?? "").trim() : "";
-    const qty = qtyCol ? parseFloat(String(row[qtyCol] ?? "0").replace(",", ".")) : 0;
-
     if (!skuRaw || skuRaw === "CODPRODUTO") continue;
 
-    data[skuRaw] = (data[skuRaw] ?? 0) + (isNaN(qty) ? 0 : qty);
+    let qty: number;
+    if (qtyCol) {
+      qty = parseFloat(String(row[qtyCol] ?? "0").replace(",", "."));
+      if (isNaN(qty)) qty = 0;
+    } else if (skuAtivoCol) {
+      // Export catálogo VTEX: "SKU ativo" = True → qty 1, False → qty 0
+      const ativo = String(row[skuAtivoCol] ?? "").trim().toLowerCase();
+      qty = (ativo === "true" || ativo === "sim" || ativo === "1") ? 1 : 0;
+    } else {
+      qty = 1; // fallback: SKU existe no catálogo
+    }
+
+    data[skuRaw] = (data[skuRaw] ?? 0) + qty;
     validRows++;
   }
 
@@ -271,18 +451,28 @@ export async function parseErpXlsx(
 // ── MeLi Parser ───────────────────────────────────────────────────────────────
 
 /**
- * Colunas fixas do export "ML FULL" (Gerenciador de Anúncios MeLi BR)
- * Replicado do MVP HTML original que funcionava:
- *   for(let i=12; i<raw.length; i++) { sku=row[3], titulo=row[6], aptas=row[21] }
+ * Colunas fixas do export "ML FULL" (Gerenciador de Anúncios MeLi BR).
+ *
+ * Estrutura real confirmada com openpyxl no arquivo ML FULL.xlsx:
+ *   - Linha 9  (0-indexed) = header principal
+ *   - Linha 10 = sub-header (col16="Aptas para venda", col17="Não aptas", ...)
+ *   - Linha 11 = sub-sub-header
+ *   - Linha 12 = primeiro dado
+ *
+ * col16 = "Aptas para venda"          → sub-coluna de "Unidades no Full"  (sum=1.326 no arquivo real)
+ * col21 = "Unidades que ocupam espaço em Full" → total físico na prateleira (sum=3.271)
+ *
+ * Usamos col16 pois representa as unidades efetivamente disponíveis para venda.
+ * A detecção é feita dinamicamente; APTAS_COL é apenas fallback.
  */
 const MELI_FIXED = {
   DATA_START_ROW: 12, // Pula 12 linhas de header/instrução
-  SKU_COL:         3, // "SKU do Vendedor" (chave de match com ERP)
-  TITULO_COL:      6, // "Produto / Título do Anúncio"
-  STATUS_COL:      9, // "Status do Anúncio"
-  APTAS_COL:      21, // "Aptas para Venda" = estoque disponível
-  CODIGO_ML_COL:   1, // Código interno ML
-  MLB_COL:         4, // Código MLB long
+  SKU_COL:         3, // "SKU do Vendedor" (col3)
+  TITULO_COL:      6, // "Produto / Título do Anúncio" (col6)
+  STATUS_COL:      9, // "Status do Anúncio" (col9)
+  APTAS_COL:      16, // "Aptas para venda" (col16, sub-header row10) — fallback se detecção falhar
+  CODIGO_ML_COL:   1, // "Código ML" (col1)
+  MLB_COL:         4, // "# Anúncio MLB" (col4)
 } as const;
 
 // Keywords para tentar detectar header automaticamente (formato alternativo)
@@ -293,11 +483,33 @@ const MELI_HEADER_KEYWORDS = [
   "status", "variacao", "categoria",
 ];
 
+/**
+ * Detecta dinamicamente a coluna "Aptas para venda" nas primeiras N linhas do Resumo.
+ * O arquivo ML Full tem header de 3 linhas (9, 10, 11) — "Aptas para venda" fica no
+ * row 10 (0-indexed), col 16. Mas MeLi pode mudar o layout; a detecção é mais robusta.
+ *
+ * Retorna o índice de coluna (0-indexed) ou o fallback hardcoded se não encontrar.
+ */
+function detectMeliAptasCol(raw: unknown[][]): number {
+  for (let r = 0; r < Math.min(raw.length, MELI_FIXED.DATA_START_ROW); r++) {
+    const row = raw[r] as unknown[];
+    for (let c = 0; c < row.length; c++) {
+      const v = norm(String(row[c] ?? ""));
+      if (v.includes("aptas para venda") || v.includes("aptas para vender") || v === "aptas") {
+        return c;
+      }
+    }
+  }
+  return MELI_FIXED.APTAS_COL; // fallback
+}
+
 export async function parseMeliXlsx(
   file: File
 ): Promise<{ data: Record<string, { qty: number; desc: string }>; diag: ParseDiagnostic }> {
-  // Lê o workbook diretamente para controlar seleção de aba
-  const wb = await readWorkbook(file);
+  // binaryFirst: true — arquivos MeLi Full têm "Bad uncompressed size" no xlsx@0.18.5
+  // O modo array retorna linhas mas com células de quantidade corrompidas/ausentes.
+  // O modo binary lê o ZIP por um caminho diferente e retorna os dados corretos.
+  const wb = await readWorkbook(file, { binaryFirst: true });
 
   // Prioriza aba 'Resumo' (formato ML Full), igual ao MVP HTML original
   const sheetName = wb.SheetNames.includes("Resumo")
@@ -360,15 +572,20 @@ export async function parseMeliXlsx(
   }
 
   if (useHardcoded) {
-    // ── Modo hardcoded: formato ML Full (igual ao MVP HTML original) ─────────
-    const { DATA_START_ROW, SKU_COL, TITULO_COL, APTAS_COL } = MELI_FIXED;
+    // ── Modo hardcoded: formato ML Full ──────────────────────────────────────
+    // Detecta coluna "Aptas para venda" dinamicamente pelo texto do header.
+    // Fallback: MELI_FIXED.APTAS_COL (col16 confirmado no arquivo real).
+    const { DATA_START_ROW, SKU_COL, TITULO_COL } = MELI_FIXED;
+    const aptasCol = detectMeliAptasCol(raw);
+
+    console.log(`[MeLi Parser] aptasCol detectado = col${aptasCol} (fallback hardcoded = col${MELI_FIXED.APTAS_COL})`);
 
     for (let i = DATA_START_ROW; i < raw.length; i++) {
       const row = raw[i];
       const sku = String(row[SKU_COL] ?? "").trim();
       if (!sku || sku === "nan") continue;
       const desc = String(row[TITULO_COL] ?? "").trim();
-      const qty  = parseFloat(String(row[APTAS_COL] ?? "0").replace(",", "."));
+      const qty  = parseFloat(String(row[aptasCol] ?? "0").replace(",", "."));
       data[sku] = { qty: isNaN(qty) ? 0 : qty, desc };
       validRows++;
     }
@@ -378,8 +595,8 @@ export async function parseMeliXlsx(
       data,
       diag: {
         totalRows: raw.length, validRows, headerRowIndex: -1,
-        detectedColumns: [`SKU=col${SKU_COL}`, `Titulo=col${TITULO_COL}`, `Aptas=col${APTAS_COL}`],
-        skuColumn: `col${SKU_COL}`, qtyColumn: `col${APTAS_COL}`, descColumn: `col${TITULO_COL}`,
+        detectedColumns: [`SKU=col${SKU_COL}`, `Titulo=col${TITULO_COL}`, `Aptas=col${aptasCol}`],
+        skuColumn: `col${SKU_COL}`, qtyColumn: `col${aptasCol}`, descColumn: `col${TITULO_COL}`,
       },
     };
   }

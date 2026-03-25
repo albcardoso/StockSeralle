@@ -30,7 +30,8 @@ export default function ImportarVtexPage() {
       {erpFileName && <StatusBanner message={`Arquivo atual: ${erpFileName}`} color="var(--purple)" bg="var(--purple-bg)" border="var(--purple-border)" />}
       <UploadCard title="Planilha VTEX" description="Arquivo .xlsx exportado da VTEX com RefId, Sku e Estoque Total." icon="□" color="var(--purple)" bg="var(--purple-bg)" onFile={handleFile} />
       <FormatHint>
-        <b>Colunas detectadas automaticamente.</b> Se der erro, abra o Console (F12) para ver as colunas detectadas.
+        <b>Colunas detectadas automaticamente.</b> O parser identifica &quot;Código de referência do SKU&quot; e &quot;SKU ativo&quot; automaticamente.<br />
+        <b>Arquivo muito grande?</b> Se o .xlsx não carregar, exporte como <b>.csv</b> direto da VTEX — funciona mais rápido e com arquivos maiores.
       </FormatHint>
     </div>
   );
