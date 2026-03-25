@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useStock } from "@/contexts/StockContext";
 
@@ -9,7 +10,7 @@ export default function DashboardPage() {
 
   const hasData = conciliacao.length > 0;
 
-  const stats = hasData
+  const stats = useMemo(() => hasData
     ? {
         totalErp: conciliacao.filter((i) => i.qtdErp !== undefined).length,
         totalMeli: conciliacao.filter((i) => i.qtdMeli !== undefined).length,
@@ -18,12 +19,12 @@ export default function DashboardPage() {
         soMeli: conciliacao.filter((i) => i.status === "so_meli").length,
         okCount: conciliacao.filter((i) => i.status === "ok").length,
       }
-    : null;
+    : null, [conciliacao]);
 
   return (
     <div>
       <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 22, color: "var(--ink)", letterSpacing: "-0.5px" }}>
+        <h1 className="page-title" style={{ fontFamily: "Syne, sans-serif", fontWeight: 800, fontSize: 22, color: "var(--ink)", letterSpacing: "-0.5px" }}>
           Dashboard
         </h1>
         <p style={{ fontSize: 13, color: "var(--mist)", marginTop: 4 }}>
@@ -40,7 +41,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Métricas */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 14, marginBottom: 24 }}>
+          <div className="dashboard-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 14, marginBottom: 24 }}>
             <MetricCard label="Total ERP" value={stats.totalErp} color="var(--blue)" bg="var(--blue-bg)" onClick={() => router.push("/conciliacao")} />
             <MetricCard label="Total MeLi" value={stats.totalMeli} color="var(--purple)" bg="var(--purple-bg)" onClick={() => router.push("/conciliacao")} />
             <MetricCard label="Divergências" value={stats.divergencias} color="var(--red)" bg="var(--red-bg)" highlight onClick={() => router.push("/conciliacao")} />
@@ -50,7 +51,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Ação rápida */}
-          <div style={{ display: "flex", gap: 10 }}>
+          <div className="quick-actions" style={{ display: "flex", gap: 10 }}>
             <QuickAction icon="⇄" label="Ver Conciliação" onClick={() => router.push("/conciliacao")} primary />
             <QuickAction icon="↑" label="Reimportar ERP" onClick={() => router.push("/importar/space")} />
             <QuickAction icon="↑" label="Reimportar MeLi" onClick={() => router.push("/importar/meli")} />

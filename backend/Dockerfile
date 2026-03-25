@@ -19,6 +19,11 @@ RUN dotnet publish src/StockSync.API/StockSync.API.csproj \
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
+
+# Railway injeta $PORT em runtime. ASP.NET Core respeita ASPNETCORE_URLS.
+# Padrão 8080; será sobrescrito pela var de ambiente do Railway se necessário.
+ENV ASPNETCORE_ENVIRONMENT=Production
+ENV ASPNETCORE_URLS=http://+:8080
 EXPOSE 8080
 
 COPY --from=build /app/publish .

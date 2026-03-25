@@ -49,16 +49,7 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <nav
-      style={{
-        width: 210,
-        flexShrink: 0,
-        background: "var(--surface)",
-        borderRight: "1px solid var(--border)",
-        padding: "18px 0",
-        overflowY: "auto",
-      }}
-    >
+    <nav className="app-sidebar" aria-label="Navegação principal">
       {navItems.map((group, gi) => (
         <div key={gi}>
           {gi > 0 && (

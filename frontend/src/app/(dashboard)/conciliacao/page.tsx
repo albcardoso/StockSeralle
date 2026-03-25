@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useStock } from "@/contexts/StockContext";
 import ConciliacaoTable from "@/components/features/conciliacao/ConciliacaoTable";
@@ -12,7 +12,14 @@ export default function ConciliacaoPage() {
   const [filter, setFilter] = useState<"all" | "div" | "ok" | "erp-only" | "meli-only">("all");
   const [search, setSearch] = useState("");
 
-  const filtered = conciliacao.filter((item) => {
+  const counts = useMemo(() => ({
+    div: conciliacao.filter((i) => i.status === "divergente").length,
+    ok: conciliacao.filter((i) => i.status === "ok").length,
+    erp: conciliacao.filter((i) => i.status === "so_erp").length,
+    meli: conciliacao.filter((i) => i.status === "so_meli").length,
+  }), [conciliacao]);
+
+  const filtered = useMemo(() => conciliacao.filter((item) => {
     const matchesFilter =
       filter === "all" ||
       (filter === "div" && item.status === "divergente") ||
@@ -26,14 +33,7 @@ export default function ConciliacaoPage() {
       item.descricao?.toLowerCase().includes(search.toLowerCase());
 
     return matchesFilter && matchesSearch;
-  });
-
-  const counts = {
-    div: conciliacao.filter((i) => i.status === "divergente").length,
-    ok: conciliacao.filter((i) => i.status === "ok").length,
-    erp: conciliacao.filter((i) => i.status === "so_erp").length,
-    meli: conciliacao.filter((i) => i.status === "so_meli").length,
-  };
+  }), [conciliacao, filter, search]);
 
   // Nenhum dado importado ainda
   if (conciliacao.length === 0) {
@@ -49,7 +49,7 @@ export default function ConciliacaoPage() {
         </div>
 
         {/* Guia de importação */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 20 }}>
+        <div className="grid-2col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 20 }}>
           <StepCard
             step={1}
             title="Importe o ERP"
@@ -101,7 +101,7 @@ export default function ConciliacaoPage() {
       </div>
 
       {/* Cards de resumo */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+      <div className="dashboard-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
         <SummaryCard label="Divergências" value={counts.div} color="var(--red)" bg="var(--red-bg)" onClick={() => setFilter("div")} active={filter === "div"} />
         <SummaryCard label="Só no ERP" value={counts.erp} color="var(--purple)" bg="var(--purple-bg)" onClick={() => setFilter("erp-only")} active={filter === "erp-only"} />
         <SummaryCard label="Só no MeLi" value={counts.meli} color="var(--amber)" bg="var(--amber-bg)" onClick={() => setFilter("meli-only")} active={filter === "meli-only"} />
@@ -109,7 +109,7 @@ export default function ConciliacaoPage() {
       </div>
 
       {/* Barra de filtros + busca */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, flexWrap: "wrap", boxShadow: "var(--shadow-sm)" }}>
+      <div className="filter-bar" style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 14px", marginBottom: 14, flexWrap: "wrap", boxShadow: "var(--shadow-sm)" }}>
         <span style={{ fontFamily: "DM Mono, monospace", fontSize: 10, fontWeight: 500, color: "var(--mist)", textTransform: "uppercase", letterSpacing: "0.8px" }}>
           Filtrar
         </span>

@@ -26,12 +26,14 @@ export default function ImportZone({ onDataLoaded }: Props) {
   }
 
   async function handleErp(file: File) {
-    erpData.current = await parseErpXlsx(file);
+    const { data } = await parseErpXlsx(file);
+    erpData.current = data;
     tryMerge();
   }
 
   async function handleMeli(file: File) {
-    meliData.current = await parseMeliXlsx(file);
+    const { data } = await parseMeliXlsx(file);
+    meliData.current = data;
     tryMerge();
   }
 

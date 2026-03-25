@@ -34,6 +34,8 @@ export default function UploadCard({
     setStatus("loading");
     setFileName(file.name);
     setErrorMsg(null);
+    // Cede ao browser para renderizar o spinner antes do parsing pesado
+    await new Promise((r) => setTimeout(r, 50));
     try {
       await onFile(file);
       setStatus("done");
@@ -44,7 +46,7 @@ export default function UploadCard({
   }
 
   return (
-    <div style={{ maxWidth: 520 }}>
+    <div className="upload-card-wrapper" style={{ maxWidth: 520 }}>
       {/* Drop Zone */}
       <div
         onDragOver={(e) => e.preventDefault()}

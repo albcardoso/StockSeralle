@@ -22,13 +22,19 @@ builder.Services.AddSwaggerGen(c =>
     c.SwaggerDoc("v1", new() { Title = "StockSync API", Version = "v1" });
 });
 
-// CORS — permite o frontend Next.js em dev
+// CORS — lê origens permitidas do ambiente (separadas por vírgula)
+// Ex: ALLOWED_ORIGINS=https://stocksync.seudominio.com,https://stocksync.vercel.app
+var allowedOriginsRaw = builder.Configuration["AllowedOrigins"]
+    ?? "http://localhost:3000";
+var allowedOrigins = allowedOriginsRaw
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
         policy
-            .WithOrigins("http://localhost:3000")
+            .WithOrigins(allowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod();
     });

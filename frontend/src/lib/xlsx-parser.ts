@@ -104,32 +104,20 @@ function scoreHeaderRow(row: unknown[], keywords: string[]): number {
 }
 
 function detectHeaderRow(rows: unknown[][], keywords: string[], maxScan?: number): number {
-  // Escaneia todas as linhas (sem limite fixo) para encontrar o header real
   const limit = maxScan ?? rows.length;
   let bestRow = 0;
   let bestScore = -Infinity;
 
   for (let i = 0; i < Math.min(rows.length, limit); i++) {
     const s = scoreHeaderRow(rows[i], keywords);
-    // Só loga as primeiras 30 linhas para não poluir demais o console
-    if (i < 30) {
-      console.log(`[detectHeader] linha ${i + 1} score=${s.toFixed(2)}`, rows[i]?.slice(0, 6));
-    }
     if (s > bestScore) {
       bestScore = s;
       bestRow = i;
     }
   }
 
-  console.log(`[detectHeader] Melhor: linha ${bestRow + 1} score=${bestScore.toFixed(2)}`);
-  console.log(`[detectHeader] Conteúdo completo da linha vencedora:`, rows[bestRow]);
-
-  // Fallback: se o melhor score ainda é <= 0, o arquivo provavelmente NÃO tem linha de header
-  // Retorna -1 para sinalizar "sem header"
-  if (bestScore <= 0) {
-    console.warn("[detectHeader] Nenhuma linha de header encontrada (score <= 0). Arquivo sem cabeçalho?");
-    return -1;
-  }
+  // Se o melhor score é <= 0, o arquivo não tem linha de header reconhecível
+  if (bestScore <= 0) return -1;
 
   return bestRow;
 }
@@ -235,9 +223,6 @@ export async function parseErpXlsx(
   }
   const rows = rawToObjects(raw, headerIdx);
 
-  console.log(`[ERP Parser] Arquivo: ${file.name} | Header linha ${headerIdx + 1}`);
-  console.log(`[ERP Parser] Colunas:`, Object.keys(rows[0] ?? {}));
-
   if (rows.length === 0) return { data: {}, diag: emptyDiag() };
 
   const firstRow = rows[0];
@@ -254,8 +239,6 @@ export async function parseErpXlsx(
   );
   // Filial: MVP HTML filtra apenas filial '98' (Sampa Full)
   const filialCol = findCol(firstRow, "filial", "loja", "cod_filial", "codfilial");
-
-  console.log(`[ERP Parser] SKU="${skuCol}" | Nome="${nomeCol}" | Qty="${qtyCol}" | Filial="${filialCol}"`);
 
   const data: Record<string, number> = {};
   let validRows = 0;
@@ -277,7 +260,7 @@ export async function parseErpXlsx(
     validRows++;
   }
 
-  console.log(`[ERP Parser] ✓ ${validRows} itens extraídos`);
+  console.log(`[ERP Parser] ✓ ${validRows} itens`);
 
   return {
     data,
@@ -326,55 +309,59 @@ export async function parseMeliXlsx(
 
   if (raw.length === 0) return { data: {}, diag: emptyDiag() };
 
-  console.log(`[MeLi Parser] Arquivo: ${file.name} | Aba: "${sheetName}" | ${raw.length} linhas`);
-  console.log(`[MeLi Parser] raw[0]:`, raw[0]);
-  console.log(`[MeLi Parser] raw[12]:`, raw[MELI_FIXED.DATA_START_ROW]);
+  console.log(`[MeLi Parser] ${file.name} | aba="${sheetName}" | ${raw.length} linhas`);
 
-  // Tenta detectar header automático (formatos futuros ou exports diferentes)
-  const headerIdx = detectHeaderRow(raw, MELI_HEADER_KEYWORDS);
+  // Tenta detectar header automático — escaneia só as primeiras 15 linhas
+  // (o bloco de header do ML Full nunca ultrapassa a linha 12)
+  const headerIdx = detectHeaderRow(raw, MELI_HEADER_KEYWORDS, 15);
 
   const data: Record<string, { qty: number; desc: string }> = {};
   let validRows = 0;
 
+  // Verifica se o auto-detect encontrou um header ÚTIL (com SKU)
+  // O MeLi FULL tem header de 2 linhas com células mescladas → col 3 (SKU) fica vazia no header
+  // Só usa auto-detect se o SKU for detectável por nome; senão, usa hardcoded
+  let useHardcoded = (headerIdx < 0);
+
   if (headerIdx >= 0) {
-    // ── Modo automático: header detectado ───────────────────────────────────
+    // ── Modo automático: header detectado, valida se SKU foi encontrado ──────
     const rows = rawToObjects(raw, headerIdx);
     const firstRow = rows[0] ?? {};
     const allCols = Object.keys(firstRow);
 
     const skuCol = findCol(firstRow,
-      "sku do vendedor", "seller sku", "sku vendedor", "sku", "referencia", "codigo"
+      "sku do vendedor", "seller sku", "sku vendedor", "sku vendedor", "referencia do vendedor"
     );
     const descCol = findCol(firstRow,
-      "titulo do anuncio", "titulo", "aptas", "title", "nome", "descricao"
+      "titulo do anuncio", "titulo", "title", "nome", "descricao"
     );
     const qtyCol = findCol(firstRow,
       "aptas para venda", "aptas", "quantidade disponivel", "estoque disponivel",
       "disponivel", "quantidade", "estoque", "stock", "qty"
     );
-    console.log(`[MeLi Parser] Modo auto: header linha ${headerIdx + 1} | SKU="${skuCol}" Desc="${descCol}" Qty="${qtyCol}"`);
-    console.log(`[MeLi Parser] Colunas:`, allCols.slice(0, 15));
+    if (!skuCol) {
+      useHardcoded = true;
+    } else {
+      for (const row of rows) {
+        const sku = skuCol ? String(row[skuCol] ?? "").trim() : "";
+        if (!sku || sku === "nan") continue;
+        const desc = descCol ? String(row[descCol] ?? "").trim() : "";
+        const qty = qtyCol ? parseFloat(String(row[qtyCol] ?? "0").replace(",", ".")) : 0;
+        data[sku] = { qty: isNaN(qty) ? 0 : qty, desc };
+        validRows++;
+      }
 
-    for (const row of rows) {
-      const sku = skuCol ? String(row[skuCol] ?? "").trim() : "";
-      if (!sku || sku === "nan") continue;
-      const desc = descCol ? String(row[descCol] ?? "").trim() : "";
-      const qty = qtyCol ? parseFloat(String(row[qtyCol] ?? "0").replace(",", ".")) : 0;
-      data[sku] = { qty: isNaN(qty) ? 0 : qty, desc };
-      validRows++;
+      const diagCols = Object.keys(rows[0] ?? {});
+      return {
+        data,
+        diag: { totalRows: raw.length, validRows, headerRowIndex: headerIdx, detectedColumns: diagCols, skuColumn: skuCol, qtyColumn: qtyCol, descColumn: descCol },
+      };
     }
+  }
 
-    console.log(`[MeLi Parser] ✓ ${validRows} itens extraídos`);
-    const diagCols = Object.keys(rows[0] ?? {});
-    return {
-      data,
-      diag: { totalRows: raw.length, validRows, headerRowIndex: headerIdx, detectedColumns: diagCols, skuColumn: skuCol, qtyColumn: qtyCol, descColumn: descCol },
-    };
-
-  } else {
+  if (useHardcoded) {
     // ── Modo hardcoded: formato ML Full (igual ao MVP HTML original) ─────────
     const { DATA_START_ROW, SKU_COL, TITULO_COL, APTAS_COL } = MELI_FIXED;
-    console.log(`[MeLi Parser] Modo hardcoded ML Full: linha ${DATA_START_ROW + 1}+ | SKU=col${SKU_COL} Titulo=col${TITULO_COL} Aptas=col${APTAS_COL}`);
 
     for (let i = DATA_START_ROW; i < raw.length; i++) {
       const row = raw[i];
@@ -386,6 +373,7 @@ export async function parseMeliXlsx(
       validRows++;
     }
 
+    console.log(`[MeLi Parser] ✓ ${validRows} itens`);
     return {
       data,
       diag: {
@@ -395,6 +383,9 @@ export async function parseMeliXlsx(
       },
     };
   }
+
+  // Nunca chega aqui, mas necessário para o TypeScript
+  return { data: {}, diag: emptyDiag() };
 }
 
 // ── Merge ─────────────────────────────────────────────────────────────────────

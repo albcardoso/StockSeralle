@@ -1,5 +1,6 @@
 import Header from "@/components/layout/Header";
 import Sidebar from "@/components/layout/Sidebar";
+import BottomNav from "@/components/layout/BottomNav";
 import { StockProvider } from "@/contexts/StockContext";
 
 export default function DashboardLayout({
@@ -13,17 +14,11 @@ export default function DashboardLayout({
         <Header />
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
           <Sidebar />
-          <main
-            style={{
-              flex: 1,
-              overflowY: "auto",
-              padding: "26px 28px",
-              background: "var(--bg)",
-            }}
-          >
+          <main className="app-main">
             {children}
           </main>
         </div>
+        <BottomNav />
       </div>
     </StockProvider>
   );

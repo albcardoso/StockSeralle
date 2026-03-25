@@ -63,7 +63,7 @@ export default function Header({
       </div>
 
       {/* Meta */}
-      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+      <div className="header-meta-secondary" style={{ alignItems: "center", gap: 16 }}>
         <div
           style={{
             background: "var(--blue-bg)",
