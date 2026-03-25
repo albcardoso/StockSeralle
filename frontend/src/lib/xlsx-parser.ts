@@ -261,43 +261,75 @@ function readWorkbook(file: File, opts?: { binaryFirst?: boolean }): Promise<XLS
 }
 
 /**
- * Faz o parsing de um arquivo XLSX em um Web Worker (thread separada).
- *
- * Fluxo:
- *  1. Lê o arquivo como ArrayBuffer na thread principal (rápido, não bloqueia)
- *  2. Transfere o buffer (zero-copy) para o worker — UI continua responsiva
- *  3. Worker parseia com XLSX + opções de performance (sem estilos/fórmulas)
- *  4. Se o worker retornar vazio (bug "Bad uncompressed size" do xlsx@0.18.5),
- *     lê o arquivo novamente como BinaryString e reenvia para o worker
+ * Parsing de XLSX na thread principal (sem worker).
+ * Usa as opções de performance do XLSX_PERF_OPTS — mais rápido que o default.
+ */
+async function parseXlsxMainThread(file: File): Promise<unknown[][]> {
+  const wb = await readWorkbook(file); // array-first com perf opts
+  if (!wb?.SheetNames?.length) return [];
+  const ws = wb.Sheets?.[wb.SheetNames[0]];
+  if (!ws) return [];
+  return XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: "" });
+}
+
+/**
+ * Tenta parsing de XLSX via Web Worker (não bloqueia a UI).
+ * Se o worker não estiver disponível ou falhar (ex: Turbopack dev mode),
+ * cai automaticamente para main thread — o resultado é o mesmo, só perde
+ * a vantagem de não bloquear a UI.
  */
 function parseXlsxViaWorker(file: File): Promise<unknown[][]> {
   return new Promise((resolve, reject) => {
-    // Cria worker — webpack/Next.js bundla automaticamente com o padrão new URL
-    const worker = new Worker(
-      new URL("../workers/xlsx.worker.ts", import.meta.url)
-    );
-
+    let worker: Worker | null = null;
     let settled = false;
+
+    // Fallback: usa main thread se o worker falhar ou demorar demais
+    const fallbackMainThread = (reason: string) => {
+      if (settled) return;
+      settled = true;
+      worker?.terminate();
+      console.warn(`[xlsx-worker] ${reason} — fallback para main thread`);
+      parseXlsxMainThread(file).then(resolve).catch(reject);
+    };
+
     const done = (rows: unknown[][]) => {
       if (settled) return;
       settled = true;
-      worker.terminate();
+      clearTimeout(timeoutId);
+      worker?.terminate();
       resolve(rows);
     };
-    const fail = (msg: string) => {
-      if (settled) return;
-      settled = true;
-      worker.terminate();
-      reject(new Error(msg));
+
+    // Timeout de segurança: se o worker não responder em 90s, usa main thread
+    const timeoutId = setTimeout(
+      () => fallbackMainThread("timeout (90s)"),
+      90_000
+    );
+
+    try {
+      worker = new Worker(
+        new URL("../workers/xlsx.worker.ts", import.meta.url)
+      );
+    } catch {
+      // Worker não disponível (Turbopack dev mode ou CSP restritivo)
+      clearTimeout(timeoutId);
+      parseXlsxMainThread(file).then(resolve).catch(reject);
+      return;
+    }
+
+    // Se o worker falhar ao iniciar ou ao executar, usa main thread
+    worker.onerror = () => {
+      clearTimeout(timeoutId);
+      fallbackMainThread("worker.onerror");
     };
 
-    // Leitura como BinaryString (fallback para bug de ZIP do xlsx)
+    // Leitura como BinaryString (fallback interno do worker para bug de ZIP)
     const tryBinary = () => {
       const r2 = new FileReader();
       r2.onload = (ev) => {
-        worker.postMessage({ type: "binary", binary: ev.target?.result as string });
+        worker?.postMessage({ type: "binary", binary: ev.target?.result as string });
       };
-      r2.onerror = () => fail("Erro ao ler arquivo (binary)");
+      r2.onerror = () => fallbackMainThread("FileReader binary error");
       r2.readAsBinaryString(file);
     };
 
@@ -307,28 +339,24 @@ function parseXlsxViaWorker(file: File): Promise<unknown[][]> {
         | { ok: false; error: string };
 
       if (!msg.ok) {
-        // Worker lançou exceção → tenta binary antes de desistir
-        tryBinary();
+        tryBinary(); // worker encontrou exceção → tenta binary
         return;
       }
       if (msg.empty) {
-        // Workbook vazio = bug de ZIP interno do xlsx — usa binary
         console.warn("[xlsx-worker] ArrayBuffer vazio — tentando BinaryString");
-        tryBinary();
+        tryBinary(); // bug de ZIP → tenta binary
         return;
       }
       done(msg.rows);
     };
 
-    worker.onerror = () => fail("Erro inesperado no worker de parsing");
-
-    // Leitura como ArrayBuffer (tentativa principal)
+    // Leitura como ArrayBuffer (transferível, zero-copy)
     const r1 = new FileReader();
     r1.onload = (ev) => {
       const buf = ev.target?.result as ArrayBuffer;
-      worker.postMessage({ type: "array", buffer: buf }, [buf]); // transferível
+      worker?.postMessage({ type: "array", buffer: buf }, [buf]);
     };
-    r1.onerror = () => fail("Erro ao ler arquivo");
+    r1.onerror = () => fallbackMainThread("FileReader array error");
     r1.readAsArrayBuffer(file);
   });
 }
@@ -341,11 +369,12 @@ async function fileToRawRows(file: File): Promise<unknown[][]> {
     const text = await file.text();
     const sep = text.includes(";") ? ";" : ",";
     const wb = XLSX.read(text, { type: "string", FS: sep });
-    const ws = wb.Sheets[wb.SheetNames[0]];
+    const ws = wb.Sheets?.[wb.SheetNames[0]];
+    if (!ws) return [];
     return XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: "" });
   }
 
-  // XLSX/XLS: usa worker para não bloquear a UI
+  // XLSX/XLS: tenta worker; se falhar, cai para main thread
   return parseXlsxViaWorker(file);
 }
 
@@ -506,10 +535,17 @@ function detectMeliAptasCol(raw: unknown[][]): number {
 export async function parseMeliXlsx(
   file: File
 ): Promise<{ data: Record<string, { qty: number; desc: string }>; diag: ParseDiagnostic }> {
-  // binaryFirst: true — arquivos MeLi Full têm "Bad uncompressed size" no xlsx@0.18.5
-  // O modo array retorna linhas mas com células de quantidade corrompidas/ausentes.
-  // O modo binary lê o ZIP por um caminho diferente e retorna os dados corretos.
-  const wb = await readWorkbook(file, { binaryFirst: true });
+  // Usa readWorkbook padrão (array-first com perf opts).
+  // O "Bad uncompressed size" do xlsx@0.18.5 pode retornar wb.Sheets incompleto —
+  // por isso adicionamos null guards abaixo em todos os acessos ao ws.
+  const wb = await readWorkbook(file);
+
+  // Guard: readWorkbook pode retornar workbook incompleto com Sheets vazio
+  // (xlsx@0.18.5 tem bug de ZIP que às vezes não popula Sheets corretamente)
+  if (!wb?.SheetNames?.length || !wb.Sheets) {
+    console.error("[MeLi Parser] Workbook inválido — SheetNames ou Sheets ausente");
+    return { data: {}, diag: emptyDiag() };
+  }
 
   // Prioriza aba 'Resumo' (formato ML Full), igual ao MVP HTML original
   const sheetName = wb.SheetNames.includes("Resumo")
@@ -517,6 +553,13 @@ export async function parseMeliXlsx(
     : wb.SheetNames[0];
 
   const ws = wb.Sheets[sheetName];
+
+  // Guard: sheet pode estar ausente se o ZIP corrompeu o arquivo da aba
+  if (!ws) {
+    console.error("[MeLi Parser] aba não encontrada:", sheetName, "| SheetNames:", wb.SheetNames);
+    return { data: {}, diag: emptyDiag() };
+  }
+
   const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: "" });
 
   if (raw.length === 0) return { data: {}, diag: emptyDiag() };
