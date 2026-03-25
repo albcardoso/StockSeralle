@@ -32,7 +32,7 @@ const PERF_OPTS: XLSX.ParsingOptions = {
   bookDeps:     false, // não carrega dependências externas
   bookFiles:    false, // não guarda arquivos internos do ZIP
   bookProps:    false, // não lê propriedades do documento
-  bookSheets:   true,  // precisa da lista de sheets
+  // bookSheets omitido = false → lê dados das células (true = só nomes de abas!)
   bookVBA:      false, // não carrega macros
 };
 

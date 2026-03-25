@@ -174,7 +174,8 @@ function rawToObjects(rows: unknown[][], headerIdx: number, syntheticHeaders?: s
 
 // ── Leitura de arquivo ────────────────────────────────────────────────────────
 
-/** Opções de performance: desliga tudo que não usamos nos dados de conciliação */
+/** Opções de performance: desliga campos desnecessários.
+ * IMPORTANTE: bookSheets:true significa "ler só nomes de abas" — deixar omitido/false. */
 const XLSX_PERF_OPTS: XLSX.ParsingOptions = {
   cellDates:    false,
   cellFormula:  false,
@@ -186,7 +187,7 @@ const XLSX_PERF_OPTS: XLSX.ParsingOptions = {
   bookDeps:     false,
   bookFiles:    false,
   bookProps:    false,
-  bookSheets:   true,
+  // bookSheets omitido = false por default → LÊ dados das células normalmente
   bookVBA:      false,
 };
 
@@ -524,12 +525,14 @@ function detectMeliAptasCol(raw: unknown[][]): number {
     const row = raw[r] as unknown[];
     for (let c = 0; c < row.length; c++) {
       const v = norm(String(row[c] ?? ""));
-      if (v.includes("aptas para venda") || v.includes("aptas para vender") || v === "aptas") {
+      // Só aceita se o texto for curto (nome de coluna, não uma descrição longa)
+      // e corresponder exatamente ou começar com o termo
+      if (v.length <= 30 && (v === "aptas para venda" || v === "aptas para vender" || v === "aptas")) {
         return c;
       }
     }
   }
-  return MELI_FIXED.APTAS_COL; // fallback
+  return MELI_FIXED.APTAS_COL; // fallback = col21 (mesmo que o MVP HTML original)
 }
 
 export async function parseMeliXlsx(
