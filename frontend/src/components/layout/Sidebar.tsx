@@ -22,6 +22,13 @@ const navItems: { section: string; items: NavItem[] }[] = [
     ],
   },
   {
+    section: "Fluxo de Suprimentos",
+    items: [
+      { href: "/fluxo-suprimentos", icon: "📦", label: "Suprimentos" },
+      { href: "/importar/suprimentos", icon: "↑", label: "Importar Suprimentos" },
+    ],
+  },
+  {
     section: "Importação",
     items: [
       { href: "/importar/space", icon: "↑", label: "Importar Space" },

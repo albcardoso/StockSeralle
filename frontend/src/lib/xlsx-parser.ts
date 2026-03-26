@@ -802,6 +802,103 @@ export function mergeData(
 /** Alias: mantém compatibilidade com páginas que importam parseErpXlsx */
 export const parseErpXlsx = parseSpaceErp;
 
+// ── Parser Fluxo de Suprimentos ─────────────────────────────────────────────
+
+import type { SupplyFlowItem } from "@/types";
+
+/**
+ * Parseia o CSV de Fluxo de Suprimentos do Space (separador ";").
+ * Colunas mapeadas:
+ *   DESCRICAO_PRODUTO → produto
+ *   COMPRAS → entradas
+ *   ESTOQUE → estoque
+ *   VENDAS → vendas
+ *   TRANSFERENCIAS → transferencias
+ *   PRECOM → pmv
+ *   MKP_R → markup
+ *   GIRO → giro (%)
+ *   COBERTURA → cobertura
+ *   ITENS → itens
+ *   DT_ULT_COMPRA → ultimaEntrada
+ */
+export async function parseSupplyFlowCsv(
+  file: File
+): Promise<{ data: SupplyFlowItem[]; diag: ParseDiagnostic }> {
+  const text = await file.text();
+  const sep = text.indexOf(";") !== -1 ? ";" : ",";
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+
+  if (lines.length < 2) {
+    return { data: [], diag: emptyDiag() };
+  }
+
+  const headers = lines[0].split(sep).map((h) => h.trim().toUpperCase());
+
+  // Encontra índices das colunas
+  const col = (name: string) => headers.findIndex((h) => h === name);
+
+  const descCol = col("DESCRICAO_PRODUTO");
+  const comprasCol = col("COMPRAS");
+  const estoqueCol = col("ESTOQUE");
+  const vendasCol = col("VENDAS");
+  const transCol = col("TRANSFERENCIAS");
+  const precomCol = col("PRECOM");
+  const mkpCol = col("MKP_R");
+  const giroCol = col("GIRO");
+  const coberturaCol = col("COBERTURA");
+  const itensCol = col("ITENS");
+  const dtUltCompraCol = col("DT_ULT_COMPRA");
+
+  if (descCol < 0) {
+    console.error("[SupplyFlow] Coluna DESCRICAO_PRODUTO não encontrada. Headers:", headers.join(", "));
+    return {
+      data: [],
+      diag: { totalRows: lines.length - 1, validRows: 0, headerRowIndex: 0, detectedColumns: headers, skuColumn: null, qtyColumn: null, descColumn: null },
+    };
+  }
+
+  const parseNum = (val: string): number => {
+    const clean = val.replace(/\./g, "").replace(",", ".");
+    return parseFloat(clean) || 0;
+  };
+
+  const data: SupplyFlowItem[] = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const cells = lines[i].split(sep);
+    const desc = (cells[descCol] ?? "").trim();
+    if (!desc) continue;
+
+    data.push({
+      produto: desc,
+      entradas: comprasCol >= 0 ? parseNum(cells[comprasCol] ?? "0") : 0,
+      estoque: estoqueCol >= 0 ? parseNum(cells[estoqueCol] ?? "0") : 0,
+      vendas: vendasCol >= 0 ? parseNum(cells[vendasCol] ?? "0") : 0,
+      transferencias: transCol >= 0 ? parseNum(cells[transCol] ?? "0") : 0,
+      pmv: precomCol >= 0 ? parseNum(cells[precomCol] ?? "0") : 0,
+      markup: mkpCol >= 0 ? (cells[mkpCol] ?? "").trim() : "",
+      giro: giroCol >= 0 ? parseNum(cells[giroCol] ?? "0") : 0,
+      cobertura: coberturaCol >= 0 ? parseNum(cells[coberturaCol] ?? "0") : 0,
+      itens: itensCol >= 0 ? parseNum(cells[itensCol] ?? "0") : 0,
+      ultimaEntrada: dtUltCompraCol >= 0 ? (cells[dtUltCompraCol] ?? "").trim() : "",
+    });
+  }
+
+  console.log(`[SupplyFlow] ✓ ${data.length} produtos`);
+  return {
+    data,
+    diag: {
+      totalRows: lines.length - 1,
+      validRows: data.length,
+      headerRowIndex: 0,
+      detectedColumns: headers,
+      skuColumn: "DESCRICAO_PRODUTO",
+      qtyColumn: "ESTOQUE",
+      descColumn: null,
+    },
+  };
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function emptyDiag(): ParseDiagnostic {

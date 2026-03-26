@@ -46,6 +46,22 @@ export interface PedidoItem {
   preco: number;
 }
 
+// ── Fluxo de Suprimentos ─────────────────────────────────────────────────────
+
+export interface SupplyFlowItem {
+  produto: string;       // ID_PRO_PRODUTO (ex: "69735 - TENIS RUNNING...")
+  entradas: number;      // COMPRAS
+  estoque: number;       // ESTOQUE
+  vendas: number;        // VENDAS
+  transferencias: number;// TRANSFERENCIAS
+  pmv: number;           // PRECOM
+  markup: string;        // MKP_R (ex: "2.80/2.10")
+  giro: number;          // GIRO (%)
+  cobertura: number;     // COBERTURA
+  itens: number;         // ITENS
+  ultimaEntrada: string; // DT_ULT_COMPRA (ex: "16/03/2026")
+}
+
 // ── API Responses ────────────────────────────────────────────────────────────
 
 export interface ApiResponse<T> {
