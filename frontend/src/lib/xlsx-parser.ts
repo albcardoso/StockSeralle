@@ -537,12 +537,110 @@ function detectMeliAptasCol(raw: unknown[][]): number {
 }
 
 /**
+ * Tenta parsear o arquivo MeLi via rota de API do servidor (Node.js).
+ * O parser nativo usa zlib do Node.js — não tem o bug "Bad uncompressed size" do SheetJS.
+ * Retorna null se a API falhar, para o caller usar o fallback browser.
+ */
+async function parseMeliViaAPI(
+  file: File
+): Promise<{ data: Record<string, { qty: number; desc: string }>; diag: ParseDiagnostic } | null> {
+  console.log(`[MeLi API] Enviando ${(file.size / 1024 / 1024).toFixed(1)} MB para /api/parse-meli...`);
+
+  let arrayBuf: ArrayBuffer;
+  try {
+    arrayBuf = await file.arrayBuffer();
+  } catch (err) {
+    console.warn("[MeLi API] Erro ao ler arquivo:", err);
+    return null;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 180_000);
+
+  try {
+    const resp = await fetch("/api/parse-meli", {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: arrayBuf,
+      signal: controller.signal,
+    });
+
+    console.log(`[MeLi API] Resposta HTTP ${resp.status}`);
+
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => "");
+      console.warn(`[MeLi API] HTTP ${resp.status}:`, body.slice(0, 200));
+      return null;
+    }
+
+    const json = (await resp.json()) as {
+      data?: Record<string, { qty: number; desc: string }>;
+      totalRows?: number;
+      validRows?: number;
+      error?: string;
+      receivedKB?: number;
+      aptasCol?: number;
+    };
+
+    console.log(
+      `[MeLi API] Servidor respondeu: totalRows=${json.totalRows ?? "?"} validRows=${json.validRows ?? "?"} error=${json.error ?? "nenhum"}`
+    );
+
+    if (json.error) {
+      console.warn(`[MeLi API] Erro do servidor: "${json.error}"`);
+      return null;
+    }
+
+    const data = json.data ?? {};
+    const validRows = Object.keys(data).length;
+    console.log(`[MeLi] ✓ ${validRows} itens (via servidor Node.js)`);
+
+    return {
+      data,
+      diag: {
+        totalRows: json.totalRows ?? 0,
+        validRows,
+        headerRowIndex: -1,
+        detectedColumns: [
+          `SKU=col${MELI_FIXED.SKU_COL}`,
+          `Titulo=col${MELI_FIXED.TITULO_COL}`,
+          `Aptas=col${json.aptasCol ?? MELI_FIXED.APTAS_COL}`,
+        ],
+        skuColumn: `col${MELI_FIXED.SKU_COL}`,
+        qtyColumn: `col${json.aptasCol ?? MELI_FIXED.APTAS_COL}`,
+        descColumn: `col${MELI_FIXED.TITULO_COL}`,
+      },
+    };
+  } catch (err) {
+    if ((err as Error).name === "AbortError") {
+      console.warn("[MeLi API] Timeout (180s) — tentando browser");
+    } else {
+      console.warn("[MeLi API] Fetch falhou:", err);
+    }
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
  * Parseia export "ML FULL" do Gerenciador de Anúncios do MeLi BR.
  * Usa aba "Resumo" e colunas fixas conforme layout confirmado.
+ *
+ * Para arquivos > 2 MB, tenta server-side primeiro (parser nativo sem bug ZIP).
  */
 export async function parseMeliXlsx(
   file: File
 ): Promise<{ data: Record<string, { qty: number; desc: string }>; diag: ParseDiagnostic }> {
+  // SEMPRE tenta server-side primeiro para XLSX (o SheetJS no browser tem bug
+  // "Bad uncompressed size" mesmo em arquivos pequenos como ML FULL).
+  // CSV não precisa — é texto plano, sem ZIP.
+  if (!file.name.toLowerCase().endsWith(".csv")) {
+    const apiResult = await parseMeliViaAPI(file);
+    if (apiResult) return apiResult;
+    console.warn("[MeLi] API falhou — usando fallback browser (pode ter erros de ZIP)");
+  }
+
   const wb = await readWorkbook(file);
 
   if (!wb?.SheetNames?.length || !wb.Sheets) {

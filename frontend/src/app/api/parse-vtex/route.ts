@@ -1,33 +1,28 @@
 /**
  * POST /api/parse-vtex
  *
- * Parsing server-side do arquivo VTEX xlsx (Node.js, sem limite de memória do browser).
+ * Parsing server-side do arquivo VTEX xlsx usando parser nativo (Node.js zlib).
+ * NÃO usa SheetJS — contorna o bug de ZIP "Bad uncompressed size" que faz
+ * o SheetJS retornar sheets vazias em arquivos grandes (49 MB, 268 MB descomprimido).
  *
- * Recebe o arquivo como raw binary (application/octet-stream) — mais simples e
- * confiável para arquivos grandes (36 MB) do que multipart/form-data.
- *
+ * Recebe o arquivo como raw binary (application/octet-stream).
  * Retorna: { data: Record<sku, {cod_produto, nome_sku}>, totalRows, validRows }
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import * as XLSX from "xlsx";
+import { parseXlsxNative } from "@/lib/native-xlsx-parser";
 
 // Força route dinâmica (não cacheada)
 export const dynamic = "force-dynamic";
 
-const PERF_OPTS: XLSX.ParsingOptions = {
-  cellFormula: false,
-  cellHTML:    false,
-  cellText:    false,
-  cellNF:      false,
-  cellStyles:  false,
-  sheetStubs:  false,
-  bookDeps:    false,
-  bookFiles:   false,
-  bookProps:   false,
-  bookVBA:     false,
-  // bookSheets OMITIDO → false → lê dados das células
-};
+// Normalização de texto (remove acentos, lowercase)
+function norm(s: unknown): string {
+  return String(s ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
 
 export async function POST(req: NextRequest) {
   const startTime = Date.now();
@@ -35,7 +30,6 @@ export async function POST(req: NextRequest) {
   try {
     console.log("[API parse-vtex] Recebendo corpo da requisição...");
 
-    // Lê o corpo como ArrayBuffer (raw binary — sem multipart parsing)
     const arrayBuf = await req.arrayBuffer();
 
     if (!arrayBuf || arrayBuf.byteLength === 0) {
@@ -44,43 +38,86 @@ export async function POST(req: NextRequest) {
     }
 
     const sizeKB = (arrayBuf.byteLength / 1024).toFixed(0);
-    console.log(`[API parse-vtex] Recebido: ${sizeKB} KB — iniciando XLSX.read()...`);
+    console.log(`[API parse-vtex] Recebido: ${sizeKB} KB — iniciando parser nativo...`);
 
     const buffer = Buffer.from(arrayBuf);
-    const wb = XLSX.read(buffer, { ...PERF_OPTS, type: "buffer" });
+    const sheets = await parseXlsxNative(buffer);
+    const sheetNames = Object.keys(sheets);
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log(`[API parse-vtex] XLSX.read() OK em ${elapsed}s | SheetNames:`, wb.SheetNames);
+    console.log(`[API parse-vtex] parseXlsxNative() OK em ${elapsed}s | Sheets:`, sheetNames);
 
-    if (!wb.SheetNames.length || !wb.Sheets) {
-      console.error("[API parse-vtex] SheetNames vazio após XLSX.read — buffer pode estar truncado. Recebido:", sizeKB, "KB");
-      return NextResponse.json({ error: "SheetNames vazio", data: {}, totalRows: 0, validRows: 0, receivedKB: Number(sizeKB) });
+    if (sheetNames.length === 0) {
+      console.error("[API parse-vtex] Nenhuma sheet encontrada");
+      return NextResponse.json({
+        error: "Nenhuma sheet encontrada",
+        data: {},
+        totalRows: 0,
+        validRows: 0,
+        receivedKB: Number(sizeKB),
+      });
     }
 
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    if (!ws || !ws["!ref"]) {
-      console.warn("[API parse-vtex] Sheet vazia ou !ref ausente. SheetNames:", wb.SheetNames);
-      return NextResponse.json({ error: "Sheet sem dados", data: {}, totalRows: 0, validRows: 0, receivedKB: Number(sizeKB) });
-    }
-
-    console.log("[API parse-vtex] !ref:", ws["!ref"]);
-
-    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: "" });
+    const raw = sheets[sheetNames[0]];
     console.log("[API parse-vtex] Linhas brutas:", raw.length);
 
-    const SKU_COL      = 28;
-    const COD_PROD_COL = 21;
-    const NOME_SKU_COL = 24;
-    const DATA_START   = 2;
+    if (raw.length < 3) {
+      console.error("[API parse-vtex] Menos de 3 linhas — arquivo pode estar corrompido");
+      return NextResponse.json({
+        error: "Sheet com poucas linhas",
+        data: {},
+        totalRows: raw.length,
+        validRows: 0,
+        receivedKB: Number(sizeKB),
+      });
+    }
+
+    // Índices padrão fixos do VTEX
+    let skuCol = 28;
+    let codProdutoCol = 21;
+    let nomeSkuCol = 24;
+    let dataStart = 2;
+
+    // Tenta detectar pelo header (primeiras 3 linhas)
+    for (let r = 0; r < Math.min(3, raw.length); r++) {
+      const row = (raw[r] as unknown[])?.map((c) => norm(String(c ?? ""))) ?? [];
+      const skuIdx = row.findIndex(
+        (h) =>
+          h === "codigo de referencia do sku" ||
+          h === "referencia do sku" ||
+          h === "cod ref sku" ||
+          h === "ref do sku"
+      );
+      const codIdx = row.findIndex(
+        (h) =>
+          h === "codigo de referencia do produto" ||
+          h === "referencia do produto" ||
+          h === "cod ref produto"
+      );
+      const nomeIdx = row.findIndex(
+        (h) => h === "nome do sku" || h === "nome sku" || h === "sku name"
+      );
+
+      if (skuIdx >= 0 && codIdx >= 0) {
+        skuCol = skuIdx;
+        codProdutoCol = codIdx;
+        if (nomeIdx >= 0) nomeSkuCol = nomeIdx;
+        dataStart = r + 1;
+        console.log(
+          `[API parse-vtex] header linha ${r}: skuCol=${skuCol}, codProdutoCol=${codProdutoCol}`
+        );
+        break;
+      }
+    }
 
     const data: Record<string, { cod_produto: string; nome_sku: string }> = {};
     let validRows = 0;
 
-    for (let i = DATA_START; i < raw.length; i++) {
-      const row = raw[i];
-      const cod  = String(row[COD_PROD_COL] ?? "").trim();
-      const sku  = String(row[SKU_COL]      ?? "").trim();
-      const nome = String(row[NOME_SKU_COL] ?? "").trim();
+    for (let i = dataStart; i < raw.length; i++) {
+      const row = (raw[i] as unknown[]) ?? [];
+      const cod = String(row[codProdutoCol] ?? "").trim();
+      const sku = String(row[skuCol] ?? "").trim();
+      const nome = String(row[nomeSkuCol] ?? "").trim();
       if (cod && sku) {
         data[sku] = { cod_produto: cod, nome_sku: nome };
         validRows++;
@@ -90,7 +127,12 @@ export async function POST(req: NextRequest) {
     const totalElapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log(`[API parse-vtex] ✓ ${validRows} SKUs | total: ${totalElapsed}s`);
 
-    return NextResponse.json({ data, totalRows: raw.length, validRows, receivedKB: Number(sizeKB) });
+    return NextResponse.json({
+      data,
+      totalRows: raw.length,
+      validRows,
+      receivedKB: Number(sizeKB),
+    });
   } catch (err) {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     console.error(`[API parse-vtex] Erro após ${elapsed}s:`, err);
