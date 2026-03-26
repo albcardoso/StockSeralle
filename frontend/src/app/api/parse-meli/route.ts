@@ -43,6 +43,27 @@ function detectAptasCol(raw: unknown[][], dataStartRow: number): number {
   return FALLBACK;
 }
 
+/**
+ * Coluna fixa "Entrada pendente" = col N (índice 13) da planilha ML FULL.
+ * Tenta detectar dinamicamente no header; fallback = 13.
+ */
+function detectEntradaPendenteCol(raw: unknown[][], dataStartRow: number): number {
+  const FALLBACK = 13; // coluna N
+  for (let r = 0; r < Math.min(raw.length, dataStartRow); r++) {
+    const row = (raw[r] as unknown[]) ?? [];
+    for (let c = 0; c < row.length; c++) {
+      const v = norm(String(row[c] ?? ""));
+      if (
+        v.length <= 40 &&
+        (v === "entrada pendente" || v === "entradas pendentes" || v.includes("entrada pendente"))
+      ) {
+        return c;
+      }
+    }
+  }
+  return FALLBACK;
+}
+
 export async function POST(req: NextRequest) {
   const startTime = Date.now();
 
@@ -88,10 +109,11 @@ export async function POST(req: NextRequest) {
     const SKU_COL = 3;
     const TITULO_COL = 6;
     const aptasCol = detectAptasCol(raw, DATA_START_ROW);
+    const entradaPendenteCol = detectEntradaPendenteCol(raw, DATA_START_ROW);
 
-    console.log(`[API parse-meli] aptasCol=${aptasCol} | dataStart=${DATA_START_ROW}`);
+    console.log(`[API parse-meli] aptasCol=${aptasCol} | entradaPendenteCol=${entradaPendenteCol} | dataStart=${DATA_START_ROW}`);
 
-    const data: Record<string, { qty: number; desc: string }> = {};
+    const data: Record<string, { qty: number; desc: string; entradaPendente: number }> = {};
     let validRows = 0;
 
     for (let i = DATA_START_ROW; i < raw.length; i++) {
@@ -100,7 +122,10 @@ export async function POST(req: NextRequest) {
       if (!sku || sku === "nan") continue;
       const desc = String(row[TITULO_COL] ?? "").trim();
       const qty = parseFloat(String(row[aptasCol] ?? "0").replace(",", "."));
-      data[sku] = { qty: isNaN(qty) ? 0 : qty, desc };
+      const entradaPendente = entradaPendenteCol >= 0
+        ? parseFloat(String(row[entradaPendenteCol] ?? "0").replace(",", "."))
+        : 0;
+      data[sku] = { qty: isNaN(qty) ? 0 : qty, desc, entradaPendente: isNaN(entradaPendente) ? 0 : entradaPendente };
       validRows++;
     }
 
@@ -114,6 +139,7 @@ export async function POST(req: NextRequest) {
       receivedKB: Number(sizeKB),
       sheetName: targetSheet,
       aptasCol,
+      entradaPendenteCol,
     });
   } catch (err) {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);

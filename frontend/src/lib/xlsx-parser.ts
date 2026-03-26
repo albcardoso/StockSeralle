@@ -14,7 +14,7 @@
  */
 
 import * as XLSX from "xlsx";
-import type { ConciliacaoItem } from "@/types";
+import type { ConciliacaoItem, MeliItem } from "@/types";
 
 // ── Tipos públicos ─────────────────────────────────────────────────────────────
 
@@ -537,13 +537,34 @@ function detectMeliAptasCol(raw: unknown[][]): number {
 }
 
 /**
+ * Coluna fixa "Entrada pendente" = col N (índice 13) da planilha ML FULL.
+ * Tenta detectar dinamicamente no header; fallback = 13.
+ */
+function detectMeliEntradaPendenteCol(raw: unknown[][]): number {
+  const FALLBACK = 13; // coluna N
+  for (let r = 0; r < Math.min(raw.length, MELI_FIXED.DATA_START_ROW); r++) {
+    const row = (raw[r] as unknown[]) ?? [];
+    for (let c = 0; c < row.length; c++) {
+      const v = norm(String(row[c] ?? ""));
+      if (
+        v.length <= 40 &&
+        (v === "entrada pendente" || v === "entradas pendentes" || v.includes("entrada pendente"))
+      ) {
+        return c;
+      }
+    }
+  }
+  return FALLBACK;
+}
+
+/**
  * Tenta parsear o arquivo MeLi via rota de API do servidor (Node.js).
  * O parser nativo usa zlib do Node.js — não tem o bug "Bad uncompressed size" do SheetJS.
  * Retorna null se a API falhar, para o caller usar o fallback browser.
  */
 async function parseMeliViaAPI(
   file: File
-): Promise<{ data: Record<string, { qty: number; desc: string }>; diag: ParseDiagnostic } | null> {
+): Promise<{ data: Record<string, MeliItem>; diag: ParseDiagnostic } | null> {
   console.log(`[MeLi API] Enviando ${(file.size / 1024 / 1024).toFixed(1)} MB para /api/parse-meli...`);
 
   let arrayBuf: ArrayBuffer;
@@ -574,12 +595,13 @@ async function parseMeliViaAPI(
     }
 
     const json = (await resp.json()) as {
-      data?: Record<string, { qty: number; desc: string }>;
+      data?: Record<string, MeliItem>;
       totalRows?: number;
       validRows?: number;
       error?: string;
       receivedKB?: number;
       aptasCol?: number;
+      entradaPendenteCol?: number;
     };
 
     console.log(
@@ -631,7 +653,7 @@ async function parseMeliViaAPI(
  */
 export async function parseMeliXlsx(
   file: File
-): Promise<{ data: Record<string, { qty: number; desc: string }>; diag: ParseDiagnostic }> {
+): Promise<{ data: Record<string, MeliItem>; diag: ParseDiagnostic }> {
   // SEMPRE tenta server-side primeiro para XLSX (o SheetJS no browser tem bug
   // "Bad uncompressed size" mesmo em arquivos pequenos como ML FULL).
   // CSV não precisa — é texto plano, sem ZIP.
@@ -663,10 +685,11 @@ export async function parseMeliXlsx(
 
   const { DATA_START_ROW, SKU_COL, TITULO_COL } = MELI_FIXED;
   const aptasCol = detectMeliAptasCol(raw);
+  const entPendCol = detectMeliEntradaPendenteCol(raw);
 
-  console.log(`[MeLi] aptasCol detectado = col${aptasCol} (fallback = col${MELI_FIXED.APTAS_COL})`);
+  console.log(`[MeLi] aptasCol=${aptasCol} | entradaPendenteCol=${entPendCol}`);
 
-  const data: Record<string, { qty: number; desc: string }> = {};
+  const data: Record<string, MeliItem> = {};
   let validRows = 0;
 
   for (let i = DATA_START_ROW; i < raw.length; i++) {
@@ -675,7 +698,10 @@ export async function parseMeliXlsx(
     if (!sku || sku === "nan") continue;
     const desc = String(row[TITULO_COL] ?? "").trim();
     const qty = parseFloat(String(row[aptasCol] ?? "0").replace(",", "."));
-    data[sku] = { qty: isNaN(qty) ? 0 : qty, desc };
+    const entradaPendente = entPendCol >= 0
+      ? parseFloat(String(row[entPendCol] ?? "0").replace(",", "."))
+      : 0;
+    data[sku] = { qty: isNaN(qty) ? 0 : qty, desc, entradaPendente: isNaN(entradaPendente) ? 0 : entradaPendente };
     validRows++;
   }
 
@@ -707,7 +733,7 @@ export async function parseMeliXlsx(
 export function mergeDataFull(
   spaceData: Record<string, number>,
   vtexMap: Record<string, VtexEntry>,
-  meliData: Record<string, { qty: number; desc: string }>
+  meliData: Record<string, MeliItem>
 ): ConciliacaoItem[] {
   const items: ConciliacaoItem[] = [];
   const seenCodProduto = new Set<string>();
@@ -765,7 +791,7 @@ export function mergeDataFull(
  */
 export function mergeData(
   erpData: Record<string, number>,
-  meliData: Record<string, { qty: number; desc: string }>
+  meliData: Record<string, MeliItem>
 ): ConciliacaoItem[] {
   const allSkus = new Set([...Object.keys(erpData), ...Object.keys(meliData)]);
   const items: ConciliacaoItem[] = [];
@@ -837,6 +863,7 @@ export async function parseSupplyFlowCsv(
   // Encontra índices das colunas
   const col = (name: string) => headers.findIndex((h) => h === name);
 
+  const skuCol = col("ID_PRO_PRODUTO_CAB");
   const descCol = col("DESCRICAO_PRODUTO");
   const comprasCol = col("COMPRAS");
   const estoqueCol = col("ESTOQUE");
@@ -870,6 +897,7 @@ export async function parseSupplyFlowCsv(
     if (!desc) continue;
 
     data.push({
+      sku: skuCol >= 0 ? (cells[skuCol] ?? "").trim() : "",
       produto: desc,
       entradas: comprasCol >= 0 ? parseNum(cells[comprasCol] ?? "0") : 0,
       estoque: estoqueCol >= 0 ? parseNum(cells[estoqueCol] ?? "0") : 0,

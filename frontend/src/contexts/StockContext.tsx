@@ -3,12 +3,12 @@
 import { createContext, useContext, useState, useCallback } from "react";
 import { mergeData, mergeDataFull } from "@/lib/xlsx-parser";
 import type { VtexEntry } from "@/lib/xlsx-parser";
-import type { ConciliacaoItem, SupplyFlowItem } from "@/types";
+import type { ConciliacaoItem, MeliItem, SupplyFlowItem } from "@/types";
 
 interface StockState {
   erpData: Record<string, number>;                         // Space ERP: cod_produto → estoque
   vtexMap: Record<string, VtexEntry>;                      // VTEX: sku → {cod_produto, nome_sku}
-  meliData: Record<string, { qty: number; desc: string }>; // MeLi: sku → {qty, desc}
+  meliData: Record<string, MeliItem>; // MeLi: sku → {qty, desc, entradaPendente}
   conciliacao: ConciliacaoItem[];
   supplyFlow: SupplyFlowItem[];
   erpFileName: string | null;
@@ -21,7 +21,7 @@ interface StockState {
 interface StockContextValue extends StockState {
   setErpData: (data: Record<string, number>, fileName: string) => void;
   setVtexData: (data: Record<string, VtexEntry>, fileName: string) => void;
-  setMeliData: (data: Record<string, { qty: number; desc: string }>, fileName: string) => void;
+  setMeliData: (data: Record<string, MeliItem>, fileName: string) => void;
   setSupplyFlowData: (data: SupplyFlowItem[], fileName: string) => void;
   clearAll: () => void;
 }
@@ -32,7 +32,7 @@ const StockContext = createContext<StockContextValue | null>(null);
 function recompute(
   erpData: Record<string, number>,
   vtexMap: Record<string, VtexEntry>,
-  meliData: Record<string, { qty: number; desc: string }>
+  meliData: Record<string, MeliItem>
 ): ConciliacaoItem[] {
   const hasErp = Object.keys(erpData).length > 0;
   const hasVtex = Object.keys(vtexMap).length > 0;
@@ -99,7 +99,7 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
   );
 
   const setMeliData = useCallback(
-    (data: Record<string, { qty: number; desc: string }>, fileName: string) => {
+    (data: Record<string, MeliItem>, fileName: string) => {
       setState((prev) => ({
         ...prev,
         meliData: data,

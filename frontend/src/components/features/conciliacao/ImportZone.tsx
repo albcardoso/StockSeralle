@@ -2,7 +2,7 @@
 
 import { useRef } from "react";
 import { parseErpXlsx, parseMeliXlsx, mergeData } from "@/lib/xlsx-parser";
-import type { ConciliacaoItem } from "@/types";
+import type { ConciliacaoItem, MeliItem } from "@/types";
 
 interface Props {
   onDataLoaded: (items: ConciliacaoItem[]) => void;
@@ -13,7 +13,7 @@ export default function ImportZone({ onDataLoaded }: Props) {
   const meliRef = useRef<HTMLInputElement>(null);
 
   const erpData = useRef<Record<string, number>>({});
-  const meliData = useRef<Record<string, { qty: number; desc: string }>>({});
+  const meliData = useRef<Record<string, MeliItem>>({});
 
   function tryMerge() {
     if (

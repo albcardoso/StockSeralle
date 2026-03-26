@@ -7,9 +7,12 @@ const PAGE_SIZE = 200;
 
 interface Props {
   items: SupplyFlowItem[];
+  showEntradaPendente?: boolean;
 }
 
-const columns: { key: keyof SupplyFlowItem; label: string; align: "left" | "center" | "right"; width?: number; mono?: boolean; format?: (v: unknown) => string }[] = [
+type ColDef = { key: keyof SupplyFlowItem; label: string; align: "left" | "center" | "right"; width?: number; mono?: boolean; format?: (v: unknown) => string };
+
+const baseColumns: ColDef[] = [
   { key: "produto", label: "Produto", align: "left", width: 340 },
   { key: "entradas", label: "Entradas", align: "center", mono: true },
   { key: "estoque", label: "Estoque", align: "center", mono: true },
@@ -23,7 +26,13 @@ const columns: { key: keyof SupplyFlowItem; label: string; align: "left" | "cent
   { key: "ultimaEntrada", label: "Última Entrada", align: "center", mono: true },
 ];
 
-export default function SupplyFlowTable({ items }: Props) {
+const entradaPendenteCol: ColDef = { key: "entradaPendente", label: "Ent. Pendente", align: "center", mono: true };
+
+export default function SupplyFlowTable({ items, showEntradaPendente = false }: Props) {
+  const columns = useMemo(() => {
+    if (showEntradaPendente) return [...baseColumns, entradaPendenteCol];
+    return baseColumns;
+  }, [showEntradaPendente]);
   const [page, setPage] = useState(0);
   const [sortKey, setSortKey] = useState<keyof SupplyFlowItem | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -95,7 +104,7 @@ export default function SupplyFlowTable({ items }: Props) {
           </thead>
           <tbody>
             {displayItems.map((item, i) => (
-              <TableRow key={item.produto + i} item={item} />
+              <TableRow key={item.produto + i} item={item} showEntradaPendente={showEntradaPendente} />
             ))}
           </tbody>
         </table>
@@ -108,9 +117,11 @@ export default function SupplyFlowTable({ items }: Props) {
   );
 }
 
-function TableRow({ item }: { item: SupplyFlowItem }) {
+function TableRow({ item, showEntradaPendente }: { item: SupplyFlowItem; showEntradaPendente: boolean }) {
   const transferColor = item.transferencias < 0 ? "var(--red)" : item.transferencias > 0 ? "var(--green)" : "var(--slate)";
   const estoqueColor = item.estoque <= 0 ? "var(--red)" : item.estoque < 10 ? "var(--amber)" : "var(--ink)";
+  const entPendVal = item.entradaPendente ?? 0;
+  const entPendColor = entPendVal > 0 ? "var(--blue)" : "var(--slate)";
 
   return (
     <tr style={{ borderBottom: "1px solid var(--border)", transition: "background 0.1s" }}
@@ -149,6 +160,11 @@ function TableRow({ item }: { item: SupplyFlowItem }) {
       <td style={{ padding: "10px 12px", fontFamily: "DM Mono, monospace", fontSize: 12, color: "var(--slate)", textAlign: "center", whiteSpace: "nowrap" }}>
         {item.ultimaEntrada}
       </td>
+      {showEntradaPendente && (
+        <td style={{ padding: "10px 12px", fontFamily: "DM Mono, monospace", fontSize: 13, color: entPendColor, textAlign: "center", fontWeight: entPendVal > 0 ? 600 : 400 }}>
+          {entPendVal}
+        </td>
+      )}
     </tr>
   );
 }

@@ -9,21 +9,48 @@ import type { SupplyFlowItem } from "@/types";
 type FilterCol = "all" | "sem-estoque" | "estoque-baixo" | "sem-giro" | "sem-entradas";
 
 export default function FluxoSuprimentosPage() {
-  const { supplyFlow, supplyFlowFileName } = useStock();
+  const { supplyFlow, supplyFlowFileName, meliData, vtexMap, erpData } = useStock();
   const router = useRouter();
+
+  // Verifica se os 3 imports estão feitos para habilitar "Entrada Pendente"
+  const hasAllImports = Object.keys(erpData).length > 0
+    && Object.keys(vtexMap).length > 0
+    && Object.keys(meliData).length > 0;
+
+  // Enriquece supplyFlow com entradaPendente do MeLi (cruzado via VTEX)
+  const enrichedData = useMemo(() => {
+    if (!hasAllImports) return supplyFlow;
+
+    // Mapa inverso: cod_produto → MeLi SKU (para cruzar com Space)
+    const codToMeliSku: Record<string, string[]> = {};
+    for (const [meliSku, entry] of Object.entries(vtexMap)) {
+      if (!codToMeliSku[entry.cod_produto]) codToMeliSku[entry.cod_produto] = [];
+      codToMeliSku[entry.cod_produto].push(meliSku);
+    }
+
+    return supplyFlow.map((item) => {
+      const meliSkus = codToMeliSku[item.sku] ?? [];
+      let totalEntradaPendente = 0;
+      for (const ms of meliSkus) {
+        const meli = meliData[ms];
+        if (meli) totalEntradaPendente += meli.entradaPendente;
+      }
+      return { ...item, entradaPendente: totalEntradaPendente };
+    });
+  }, [supplyFlow, hasAllImports, vtexMap, meliData]);
   const [filter, setFilter] = useState<FilterCol>("all");
   const [search, setSearch] = useState("");
   const [colFilter, setColFilter] = useState<{ column: keyof SupplyFlowItem | ""; op: ">" | "<" | "=" | ">="; value: string }>({ column: "", op: ">=", value: "" });
 
   const counts = useMemo(() => ({
-    semEstoque: supplyFlow.filter((i) => i.estoque <= 0).length,
-    estoqueBaixo: supplyFlow.filter((i) => i.estoque > 0 && i.estoque <= 10).length,
-    semGiro: supplyFlow.filter((i) => i.giro === 0).length,
-    semEntradas: supplyFlow.filter((i) => i.entradas === 0).length,
-  }), [supplyFlow]);
+    semEstoque: enrichedData.filter((i) => i.estoque <= 0).length,
+    estoqueBaixo: enrichedData.filter((i) => i.estoque > 0 && i.estoque <= 10).length,
+    semGiro: enrichedData.filter((i) => i.giro === 0).length,
+    semEntradas: enrichedData.filter((i) => i.entradas === 0).length,
+  }), [enrichedData]);
 
   const filtered = useMemo(() => {
-    return supplyFlow.filter((item) => {
+    return enrichedData.filter((item) => {
       // Filtro rápido
       const matchesFilter =
         filter === "all" ||
@@ -53,7 +80,7 @@ export default function FluxoSuprimentosPage() {
 
       return matchesFilter && matchesSearch && matchesColFilter;
     });
-  }, [supplyFlow, filter, search, colFilter]);
+  }, [enrichedData, filter, search, colFilter]);
 
   // Estado vazio — nenhum dado importado
   if (supplyFlow.length === 0) {
@@ -93,11 +120,21 @@ export default function FluxoSuprimentosPage() {
           <div style={{ display: "flex", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
             {supplyFlowFileName && <FileBadge label={supplyFlowFileName} color="var(--blue)" bg="var(--blue-bg)" />}
             <span style={{ fontSize: 12, color: "var(--mist)", fontFamily: "DM Mono, monospace", alignSelf: "center" }}>
-              {supplyFlow.length.toLocaleString("pt-BR")} produtos
+              {enrichedData.length.toLocaleString("pt-BR")} produtos
             </span>
           </div>
         </div>
       </div>
+
+      {/* Aviso: imports pendentes para Entrada Pendente */}
+      {!hasAllImports && (
+        <div style={{ background: "var(--amber-bg)", border: "1px solid var(--amber-border)", borderRadius: 8, padding: "10px 16px", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 14 }}>⚠️</span>
+          <span style={{ fontSize: 12, color: "var(--amber)", fontWeight: 500 }}>
+            Para exibir a coluna &quot;Entrada Pendente&quot;, importe as 3 planilhas: Space, VTEX e MeLi.
+          </span>
+        </div>
+      )}
 
       {/* Cards de resumo */}
       <div className="dashboard-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
@@ -115,9 +152,9 @@ export default function FluxoSuprimentosPage() {
         <input type="text" placeholder="Buscar produto..." value={search} onChange={(e) => setSearch(e.target.value)}
           style={{ flex: 1, minWidth: 180, padding: "7px 12px", background: "var(--surface)", border: "1.5px solid var(--border2)", borderRadius: 6, color: "var(--ink)", fontSize: 13, outline: "none" }} />
         <span style={{ fontFamily: "DM Mono, monospace", fontSize: 11, color: "var(--slate)" }}>
-          {filtered.length} / {supplyFlow.length}
+          {filtered.length} / {enrichedData.length}
         </span>
-        <ExportButton items={filtered} />
+        <ExportButton items={filtered} showEntradaPendente={hasAllImports} />
       </div>
 
       {/* Filtro avançado por coluna */}
@@ -136,6 +173,7 @@ export default function FluxoSuprimentosPage() {
           <option value="giro">% Giro</option>
           <option value="cobertura">Cobertura</option>
           <option value="itens">Itens</option>
+          {hasAllImports && <option value="entradaPendente">Entrada Pendente</option>}
         </select>
         {colFilter.column && (
           <>
@@ -156,7 +194,7 @@ export default function FluxoSuprimentosPage() {
         )}
       </div>
 
-      <SupplyFlowTable items={filtered} />
+      <SupplyFlowTable items={filtered} showEntradaPendente={hasAllImports} />
     </div>
   );
 }
@@ -183,13 +221,18 @@ function FileBadge({ label, color, bg }: { label: string; color: string; bg: str
   );
 }
 
-function ExportButton({ items }: { items: SupplyFlowItem[] }) {
+function ExportButton({ items, showEntradaPendente }: { items: SupplyFlowItem[]; showEntradaPendente: boolean }) {
   function exportCSV() {
     const headers = ["Produto", "Entradas", "Estoque", "Vendas", "Transferências", "PMV", "Markup", "% Giro", "Cobertura", "Itens", "Última Entrada"];
-    const rows = items.map((i) => [
-      i.produto, i.entradas, i.estoque, i.vendas, i.transferencias,
-      i.pmv, i.markup, i.giro, i.cobertura, i.itens, i.ultimaEntrada,
-    ]);
+    if (showEntradaPendente) headers.push("Entrada Pendente");
+    const rows = items.map((i) => {
+      const row: (string | number)[] = [
+        i.produto, i.entradas, i.estoque, i.vendas, i.transferencias,
+        i.pmv, i.markup, i.giro, i.cobertura, i.itens, i.ultimaEntrada,
+      ];
+      if (showEntradaPendente) row.push(i.entradaPendente ?? 0);
+      return row;
+    });
     const csv = [headers, ...rows].map((r) => r.map((v) => `"${v}"`).join(",")).join("\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);

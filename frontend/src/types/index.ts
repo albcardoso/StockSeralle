@@ -49,7 +49,8 @@ export interface PedidoItem {
 // ── Fluxo de Suprimentos ─────────────────────────────────────────────────────
 
 export interface SupplyFlowItem {
-  produto: string;       // ID_PRO_PRODUTO (ex: "69735 - TENIS RUNNING...")
+  sku: string;           // ID_PRO_PRODUTO_CAB (código do produto Space)
+  produto: string;       // DESCRICAO_PRODUTO (ex: "69735 - TENIS RUNNING...")
   entradas: number;      // COMPRAS
   estoque: number;       // ESTOQUE
   vendas: number;        // VENDAS
@@ -60,6 +61,15 @@ export interface SupplyFlowItem {
   cobertura: number;     // COBERTURA
   itens: number;         // ITENS
   ultimaEntrada: string; // DT_ULT_COMPRA (ex: "16/03/2026")
+  entradaPendente?: number; // Vem do MeLi (cruzado via VTEX) — só com 3 imports
+}
+
+// ── MeLi ─────────────────────────────────────────────────────────────────────
+
+export interface MeliItem {
+  qty: number;
+  desc: string;
+  entradaPendente: number;
 }
 
 // ── API Responses ────────────────────────────────────────────────────────────
