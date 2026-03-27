@@ -2,9 +2,12 @@
 
 export interface ConciliacaoItem {
   sku: string;
+  codProduto?: string;
+  tamanho?: string;
   descricao?: string;
   qtdErp?: number;
   qtdMeli?: number;
+  mlb?: string;
   status: "ok" | "divergente" | "so_erp" | "so_meli";
 }
 
@@ -70,6 +73,7 @@ export interface MeliItem {
   qty: number;
   desc: string;
   entradaPendente: number;
+  mlb: string;
 }
 
 // ── API Responses ────────────────────────────────────────────────────────────

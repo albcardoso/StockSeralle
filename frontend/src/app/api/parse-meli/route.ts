@@ -27,7 +27,7 @@ function norm(s: unknown): string {
  * Retorna o fallback (col 16) se não encontrar.
  */
 function detectAptasCol(raw: unknown[][], dataStartRow: number): number {
-  const FALLBACK = 16;
+  const FALLBACK = 21; // coluna V (índice 21)
   for (let r = 0; r < Math.min(raw.length, dataStartRow); r++) {
     const row = (raw[r] as unknown[]) ?? [];
     for (let c = 0; c < row.length; c++) {
@@ -107,13 +107,14 @@ export async function POST(req: NextRequest) {
     // Colunas fixas do ML FULL
     const DATA_START_ROW = 12;
     const SKU_COL = 3;
+    const MLB_COL = 4;  // coluna E — MLB do anúncio
     const TITULO_COL = 6;
     const aptasCol = detectAptasCol(raw, DATA_START_ROW);
     const entradaPendenteCol = detectEntradaPendenteCol(raw, DATA_START_ROW);
 
-    console.log(`[API parse-meli] aptasCol=${aptasCol} | entradaPendenteCol=${entradaPendenteCol} | dataStart=${DATA_START_ROW}`);
+    console.log(`[API parse-meli] aptasCol=${aptasCol} | entradaPendenteCol=${entradaPendenteCol} | mlbCol=${MLB_COL} | dataStart=${DATA_START_ROW}`);
 
-    const data: Record<string, { qty: number; desc: string; entradaPendente: number }> = {};
+    const data: Record<string, { qty: number; desc: string; entradaPendente: number; mlb: string }> = {};
     let validRows = 0;
 
     for (let i = DATA_START_ROW; i < raw.length; i++) {
@@ -121,11 +122,12 @@ export async function POST(req: NextRequest) {
       const sku = String(row[SKU_COL] ?? "").trim();
       if (!sku || sku === "nan") continue;
       const desc = String(row[TITULO_COL] ?? "").trim();
+      const mlb = String(row[MLB_COL] ?? "").trim();
       const qty = parseFloat(String(row[aptasCol] ?? "0").replace(",", "."));
       const entradaPendente = entradaPendenteCol >= 0
         ? parseFloat(String(row[entradaPendenteCol] ?? "0").replace(",", "."))
         : 0;
-      data[sku] = { qty: isNaN(qty) ? 0 : qty, desc, entradaPendente: isNaN(entradaPendente) ? 0 : entradaPendente };
+      data[sku] = { qty: isNaN(qty) ? 0 : qty, desc, mlb, entradaPendente: isNaN(entradaPendente) ? 0 : entradaPendente };
       validRows++;
     }
 

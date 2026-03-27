@@ -247,6 +247,12 @@ export async function parseSpaceErp(
     return { data: {}, diag: { totalRows: raw.length, validRows: 0, headerRowIndex: headerIdx, detectedColumns: headers, skuColumn: null, qtyColumn: null, descColumn: null } };
   }
 
+  // Colunas fixas conforme layout Space:
+  //   Coluna G (índice 6) = numeração/tamanho
+  //   Coluna N (índice 13) = estoque disponível
+  const tamanhoCol = 6;   // coluna G
+  const estoqueFixedCol = 13; // coluna N
+
   const data: Record<string, number> = {};
   let validRows = 0;
 
@@ -262,16 +268,19 @@ export async function parseSpaceErp(
     const cod = String(row[codCol] ?? "").trim();
     if (!cod || norm(cod) === "codproduto") continue;
 
-    const qty =
-      estoqueCol >= 0
-        ? parseFloat(String(row[estoqueCol] ?? "0").replace(",", ".")) || 0
-        : 1;
+    // Tamanho/numeração da coluna G — normaliza removendo ".0" e espaços
+    const tamanhoRaw = String(row[tamanhoCol] ?? "").trim().replace(/\.0$/, "");
 
-    data[cod] = (data[cod] ?? 0) + qty;
+    // Estoque da coluna N (fixa)
+    const qty = parseFloat(String(row[estoqueFixedCol] ?? "0").replace(",", ".")) || 0;
+
+    // Chave composta: cod_produto|tamanho (permite lookup por SKU+tamanho)
+    const key = tamanhoRaw ? `${cod}|${tamanhoRaw}` : cod;
+    data[key] = (data[key] ?? 0) + qty;
     validRows++;
   }
 
-  console.log(`[Space ERP] ✓ ${validRows} itens (filial 98)`);
+  console.log(`[Space ERP] ✓ ${validRows} itens (filial 98) | chave composta cod|tamanho`);
   return {
     data,
     diag: {
@@ -280,8 +289,8 @@ export async function parseSpaceErp(
       headerRowIndex: headerIdx,
       detectedColumns: headers,
       skuColumn: codCol >= 0 ? headers[codCol] : null,
-      qtyColumn: estoqueCol >= 0 ? headers[estoqueCol] : null,
-      descColumn: null,
+      qtyColumn: `col13 (N)`,
+      descColumn: `col6 (G) = tamanho`,
     },
   };
 }
@@ -511,8 +520,9 @@ export async function parseVtexMapping(
 const MELI_FIXED = {
   DATA_START_ROW: 12,
   SKU_COL: 3,
+  MLB_COL: 4,  // coluna E — MLB do anúncio
   TITULO_COL: 6,
-  APTAS_COL: 16, // "Aptas para venda" — fallback se detecção dinâmica falhar
+  APTAS_COL: 21, // "Aptas para venda" — coluna V (índice 21)
 } as const;
 
 /**
@@ -683,11 +693,11 @@ export async function parseMeliXlsx(
 
   console.log(`[MeLi] ${file.name} | aba="${sheetName}" | ${raw.length} linhas`);
 
-  const { DATA_START_ROW, SKU_COL, TITULO_COL } = MELI_FIXED;
+  const { DATA_START_ROW, SKU_COL, MLB_COL, TITULO_COL } = MELI_FIXED;
   const aptasCol = detectMeliAptasCol(raw);
   const entPendCol = detectMeliEntradaPendenteCol(raw);
 
-  console.log(`[MeLi] aptasCol=${aptasCol} | entradaPendenteCol=${entPendCol}`);
+  console.log(`[MeLi] aptasCol=${aptasCol} | entradaPendenteCol=${entPendCol} | mlbCol=${MLB_COL}`);
 
   const data: Record<string, MeliItem> = {};
   let validRows = 0;
@@ -697,11 +707,12 @@ export async function parseMeliXlsx(
     const sku = String(row[SKU_COL] ?? "").trim();
     if (!sku || sku === "nan") continue;
     const desc = String(row[TITULO_COL] ?? "").trim();
+    const mlb = String(row[MLB_COL] ?? "").trim();
     const qty = parseFloat(String(row[aptasCol] ?? "0").replace(",", "."));
     const entradaPendente = entPendCol >= 0
       ? parseFloat(String(row[entPendCol] ?? "0").replace(",", "."))
       : 0;
-    data[sku] = { qty: isNaN(qty) ? 0 : qty, desc, entradaPendente: isNaN(entradaPendente) ? 0 : entradaPendente };
+    data[sku] = { qty: isNaN(qty) ? 0 : qty, desc, mlb, entradaPendente: isNaN(entradaPendente) ? 0 : entradaPendente };
     validRows++;
   }
 
@@ -727,8 +738,26 @@ export async function parseMeliXlsx(
 // ── Merge ──────────────────────────────────────────────────────────────────────
 
 /**
- * Join completo (3-way):
- *   MeLi.sku → vtexMap[sku].cod_produto → spaceErp[cod_produto] = estoque
+ * Extrai os últimos 2 dígitos (da direita p/ esquerda) do nome do SKU VTEX.
+ * Representa o tamanho/numeração. Ex: "TENIS RUNNING MASC 42" → "42"
+ */
+function extractTamanho(nomeSku: string): string {
+  const digits: string[] = [];
+  for (let i = nomeSku.length - 1; i >= 0 && digits.length < 2; i--) {
+    if (/\d/.test(nomeSku[i])) {
+      digits.unshift(nomeSku[i]);
+    }
+  }
+  return digits.join("");
+}
+
+/**
+ * Join completo (3-way) com estoque por tamanho:
+ *   MeLi.sku → vtexMap[sku].cod_produto + extractTamanho(nome_sku)
+ *            → spaceErp[cod_produto|tamanho] = estoque
+ *
+ * O Space agora usa chave composta "cod_produto|tamanho" (coluna G + N).
+ * O tamanho é extraído dos 2 últimos dígitos do nome do SKU VTEX (col Y).
  */
 export function mergeDataFull(
   spaceData: Record<string, number>,
@@ -736,15 +765,22 @@ export function mergeDataFull(
   meliData: Record<string, MeliItem>
 ): ConciliacaoItem[] {
   const items: ConciliacaoItem[] = [];
-  const seenCodProduto = new Set<string>();
+  const seenSpaceKeys = new Set<string>();
 
-  // Itera MeLi → lookup VTEX → lookup Space
+  // Itera MeLi → lookup VTEX → lookup Space (por tamanho)
   for (const [sku, meli] of Object.entries(meliData)) {
     const vtxEntry = vtexMap[sku];
     const codProduto = vtxEntry?.cod_produto;
-    const qtdErp = codProduto !== undefined ? spaceData[codProduto] : undefined;
+    const tamanho = vtxEntry ? extractTamanho(vtxEntry.nome_sku) : "";
 
-    if (codProduto) seenCodProduto.add(codProduto);
+    // Chave composta para buscar estoque por tamanho no Space
+    const spaceKey = codProduto && tamanho
+      ? `${codProduto}|${tamanho}`
+      : codProduto ?? "";
+
+    const qtdErp = spaceKey ? spaceData[spaceKey] : undefined;
+
+    if (spaceKey) seenSpaceKeys.add(spaceKey);
 
     let status: ConciliacaoItem["status"];
     if (qtdErp !== undefined) {
@@ -755,24 +791,34 @@ export function mergeDataFull(
 
     items.push({
       sku,
+      codProduto: codProduto ?? undefined,
+      tamanho: tamanho || undefined,
       descricao: meli.desc || vtxEntry?.nome_sku,
       qtdErp,
       qtdMeli: meli.qty,
+      mlb: meli.mlb || undefined,
       status,
     });
   }
 
   // Itens do Space sem correspondência no MeLi
-  // Reconstrói mapa inverso: cod_produto → primeiro sku que o referencia
-  const codToSku: Record<string, string> = {};
-  for (const [sku, entry] of Object.entries(vtexMap)) {
-    if (!codToSku[entry.cod_produto]) codToSku[entry.cod_produto] = sku;
-  }
+  for (const [spaceKey, estoque] of Object.entries(spaceData)) {
+    if (seenSpaceKeys.has(spaceKey)) continue;
 
-  for (const [codProduto, estoque] of Object.entries(spaceData)) {
-    if (seenCodProduto.has(codProduto)) continue;
-    const sku = codToSku[codProduto] ?? codProduto;
-    items.push({ sku, qtdErp: estoque, qtdMeli: undefined, status: "so_erp" });
+    // spaceKey pode ser "cod_produto|tamanho" ou apenas "cod_produto"
+    const [codPart, tamanhoPart] = spaceKey.includes("|")
+      ? spaceKey.split("|", 2)
+      : [spaceKey, ""];
+    const displaySku = tamanhoPart ? `${codPart}-${tamanhoPart}` : codPart;
+
+    items.push({
+      sku: displaySku,
+      codProduto: codPart,
+      tamanho: tamanhoPart || undefined,
+      qtdErp: estoque,
+      qtdMeli: undefined,
+      status: "so_erp",
+    });
   }
 
   const order: Record<ConciliacaoItem["status"], number> = {

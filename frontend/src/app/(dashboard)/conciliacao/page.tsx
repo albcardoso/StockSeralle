@@ -30,6 +30,7 @@ export default function ConciliacaoPage() {
     const matchesSearch =
       !search ||
       item.sku.toLowerCase().includes(search.toLowerCase()) ||
+      item.codProduto?.toLowerCase().includes(search.toLowerCase()) ||
       item.descricao?.toLowerCase().includes(search.toLowerCase());
 
     return matchesFilter && matchesSearch;
@@ -184,14 +185,17 @@ function FileBadge({ label, color, bg }: { label: string; color: string; bg: str
 
 function ExportButton({ items }: { items: ConciliacaoItem[] }) {
   function exportCSV() {
-    const headers = ["SKU", "Descrição", "Qtd ERP", "Qtd MeLi", "Diferença", "Status"];
+    const headers = ["SKU", "Cod. Produto", "Tamanho", "Descrição", "Qtd ERP", "Qtd MeLi", "Diferença", "Status", "MLB"];
     const rows = items.map((i) => [
       i.sku,
+      i.codProduto ?? "",
+      i.tamanho ?? "",
       i.descricao ?? "",
       i.qtdErp ?? "",
       i.qtdMeli ?? "",
       i.qtdMeli !== undefined && i.qtdErp !== undefined ? i.qtdMeli - i.qtdErp : "",
       i.status,
+      i.mlb ?? "",
     ]);
     const csv = [headers, ...rows].map((r) => r.map((v) => `"${v}"`).join(",")).join("\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });

@@ -90,7 +90,7 @@ export default function ConciliacaoTable({ items }: Props) {
                 borderBottom: "1px solid var(--border)",
               }}
             >
-              {["SKU", "Descrição", "ERP", "MeLi", "Diferença", "Status"].map(
+              {["SKU", "Cod. Produto", "Tamanho", "Descrição", "ERP", "MeLi", "Diferença", "Status", "MLB"].map(
                 (h) => (
                   <th
                     key={h}
@@ -171,6 +171,29 @@ function TableRow({ item }: { item: ConciliacaoItem }) {
       <td
         style={{
           padding: "10px 14px",
+          fontFamily: "DM Mono, monospace",
+          fontSize: 11,
+          color: "var(--mist)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {item.codProduto ?? "—"}
+      </td>
+      <td
+        style={{
+          padding: "10px 14px",
+          fontFamily: "DM Mono, monospace",
+          fontSize: 12,
+          color: "var(--ink2)",
+          textAlign: "center",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {item.tamanho ?? "—"}
+      </td>
+      <td
+        style={{
+          padding: "10px 14px",
           fontSize: 13,
           color: "var(--slate)",
           maxWidth: 280,
@@ -237,6 +260,17 @@ function TableRow({ item }: { item: ConciliacaoItem }) {
         >
           {cfg.label}
         </span>
+      </td>
+      <td
+        style={{
+          padding: "10px 14px",
+          fontFamily: "DM Mono, monospace",
+          fontSize: 11,
+          color: "var(--mist)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {item.mlb ?? "—"}
       </td>
     </tr>
   );
