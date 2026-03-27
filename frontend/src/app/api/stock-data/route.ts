@@ -65,7 +65,7 @@ export async function GET() {
     const col = db.collection<StockDoc>(COLLECTION);
 
     // Busca todos os documentos de uma vez
-    const docs = await col.find({ _id: { $in: ["erp", "vtex", "meli"] } }).toArray();
+    const docs = await col.find({ _id: { $in: ["erp", "vtex", "meli", "supply"] } }).toArray();
 
     if (docs.length === 0) {
       console.log("[stock-data] GET — nenhum dado salvo no MongoDB");
@@ -153,6 +153,18 @@ export async function POST(req: NextRequest) {
 
       const entries = body.meliData ? Object.keys(body.meliData as object).length : 0;
       console.log(`[stock-data] ✓ POST meli — ${entries} itens salvos em ${savedAt}`);
+
+    } else if (source === "supply") {
+      await col.replaceOne({ _id: "supply" }, {
+        _id: "supply",
+        supplyFlow: body.supplyFlow,
+        supplyFlowFileName: body.supplyFlowFileName,
+        lastUpdated: body.lastUpdated,
+        savedAt,
+      }, { upsert: true });
+
+      const entries = Array.isArray(body.supplyFlow) ? (body.supplyFlow as unknown[]).length : 0;
+      console.log(`[stock-data] ✓ POST supply — ${entries} itens salvos em ${savedAt}`);
 
     } else {
       // Fallback legado

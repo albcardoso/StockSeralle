@@ -56,9 +56,11 @@ interface PersistedState {
   erpData: Record<string, number>;
   vtexMap: Record<string, VtexEntry>;
   meliData: Record<string, MeliItem>;
+  supplyFlow?: SupplyFlowItem[];
   erpFileName: string | null;
   vtexFileName: string | null;
   meliFileName: string | null;
+  supplyFlowFileName?: string | null;
   lastUpdated: string | null;
   savedAt?: string;
   empty?: boolean;
@@ -96,7 +98,7 @@ async function gzipCompress(text: string): Promise<Uint8Array> {
  * (a planilha VTEX com 142K linhas tem ~15MB em JSON, mas ~1-2MB comprimida).
  */
 async function saveSource(
-  source: "erp" | "vtex" | "meli",
+  source: "erp" | "vtex" | "meli" | "supply",
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   payload: Record<string, any>
 ): Promise<boolean> {
@@ -211,7 +213,7 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
           || Object.keys(vtexMap).length > 0
           || Object.keys(meliData).length > 0;
 
-        if (hasData) {
+        if (hasData || (saved.supplyFlow && saved.supplyFlow.length > 0)) {
           const conciliacao = recompute(erpData, vtexMap, meliData);
 
           setState({
@@ -219,11 +221,11 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
             vtexMap,
             meliData,
             conciliacao,
-            supplyFlow: [],
+            supplyFlow: saved.supplyFlow ?? [],
             erpFileName: saved.erpFileName ?? null,
             vtexFileName: saved.vtexFileName ?? null,
             meliFileName: saved.meliFileName ?? null,
-            supplyFlowFileName: null,
+            supplyFlowFileName: saved.supplyFlowFileName ?? null,
             lastUpdated: saved.lastUpdated ? new Date(saved.lastUpdated) : null,
             isLoading: false,
           });
@@ -251,6 +253,12 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
         supplyFlowFileName: fileName,
         lastUpdated: new Date(),
       }));
+      // Salva no servidor
+      saveSource("supply", {
+        supplyFlow: data,
+        supplyFlowFileName: fileName,
+        lastUpdated: new Date().toISOString(),
+      });
     },
     []
   );

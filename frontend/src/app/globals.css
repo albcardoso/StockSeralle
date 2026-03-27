@@ -100,10 +100,29 @@ body {
   display: flex;
 }
 
-/* Tabela: scroll horizontal em telas pequenas */
+/* Tabela: scroll horizontal em todas as telas */
 .table-scroll-wrapper {
   overflow-x: auto;
+  overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border2) transparent;
+}
+
+/* Scrollbar mais visível para tabelas */
+.table-scroll-wrapper::-webkit-scrollbar {
+  height: 8px;
+}
+.table-scroll-wrapper::-webkit-scrollbar-track {
+  background: var(--surface2);
+  border-radius: 4px;
+}
+.table-scroll-wrapper::-webkit-scrollbar-thumb {
+  background: var(--border2);
+  border-radius: 4px;
+}
+.table-scroll-wrapper::-webkit-scrollbar-thumb:hover {
+  background: var(--mist);
 }
 
 /* Upload card: max-width full no mobile */

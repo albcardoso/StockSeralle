@@ -77,7 +77,6 @@ export default function ConciliacaoTable({ items }: Props) {
           background: "var(--surface)",
           border: "1px solid var(--border)",
           borderRadius: 12,
-          overflow: "hidden",
           boxShadow: "var(--shadow-sm)",
           marginTop: totalPages > 1 ? 8 : 0,
         }}

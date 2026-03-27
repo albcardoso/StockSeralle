@@ -26,7 +26,7 @@ const baseColumns: ColDef[] = [
   { key: "ultimaEntrada", label: "Última Entrada", align: "center", mono: true },
 ];
 
-const entradaPendenteCol: ColDef = { key: "entradaPendente", label: "Ent. Pendente", align: "center", mono: true };
+const entradaPendenteCol: ColDef = { key: "entradaPendente", label: "Entrada Pendente", align: "center", mono: true };
 
 export default function SupplyFlowTable({ items, showEntradaPendente = false }: Props) {
   const columns = useMemo(() => {
@@ -83,8 +83,8 @@ export default function SupplyFlowTable({ items, showEntradaPendente = false }: 
         <PaginationBar page={safePage} totalPages={totalPages} totalItems={sorted.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
       )}
 
-      <div className="table-scroll-wrapper" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden", boxShadow: "var(--shadow-sm)", marginTop: totalPages > 1 ? 8 : 0 }}>
-        <table style={{ width: "100%", minWidth: 1100, borderCollapse: "collapse" }}>
+      <div className="table-scroll-wrapper" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 12, boxShadow: "var(--shadow-sm)", marginTop: totalPages > 1 ? 8 : 0 }}>
+        <table style={{ width: "100%", minWidth: 1200, borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ background: "var(--surface2)", borderBottom: "1px solid var(--border)" }}>
               {columns.map((col) => (
