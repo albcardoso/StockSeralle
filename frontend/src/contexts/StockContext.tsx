@@ -64,8 +64,8 @@ interface PersistedState {
   empty?: boolean;
 }
 
-/** Salva estado no servidor (fire-and-forget). */
-function saveToServer(state: StockState) {
+/** Salva estado no servidor. Retorna Promise para permitir await quando necessário. */
+function saveToServer(state: StockState): Promise<boolean> {
   const payload: PersistedState = {
     erpData: state.erpData,
     vtexMap: state.vtexMap,
@@ -76,27 +76,60 @@ function saveToServer(state: StockState) {
     lastUpdated: state.lastUpdated?.toISOString() ?? null,
   };
 
-  fetch("/api/stock-data", {
+  return fetch("/api/stock-data", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   })
-    .then((r) => {
-      if (!r.ok) console.warn("[StockContext] Erro ao salvar no servidor:", r.status);
-      else console.log("[StockContext] ✓ Dados salvos no servidor");
+    .then(async (r) => {
+      if (!r.ok) {
+        const text = await r.text().catch(() => "");
+        console.warn("[StockContext] Erro ao salvar no servidor:", r.status, text);
+        return false;
+      }
+      const result = await r.json().catch(() => ({}));
+      console.log("[StockContext] ✓ Dados salvos no servidor em", result.savedAt);
+      return true;
     })
-    .catch((err) => console.warn("[StockContext] Erro ao salvar:", err));
+    .catch((err) => {
+      console.warn("[StockContext] Erro ao salvar:", err);
+      return false;
+    });
 }
 
-/** Carrega estado do servidor. */
+/** Carrega estado do servidor (com cache-busting para garantir dados frescos). */
 async function loadFromServer(): Promise<PersistedState | null> {
   try {
-    const resp = await fetch("/api/stock-data");
-    if (!resp.ok) return null;
+    // Cache-busting: adiciona timestamp para evitar cache do browser
+    const resp = await fetch(`/api/stock-data?_t=${Date.now()}`, {
+      cache: "no-store",
+      headers: {
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+      },
+    });
+
+    if (!resp.ok) {
+      console.warn("[StockContext] loadFromServer — resposta não-ok:", resp.status);
+      return null;
+    }
+
     const data = (await resp.json()) as PersistedState;
-    if (data.empty) return null;
+
+    if (data.empty) {
+      console.log("[StockContext] loadFromServer — servidor retornou vazio (sem dados salvos)");
+      return null;
+    }
+
+    const erpCount = data.erpData ? Object.keys(data.erpData).length : 0;
+    const meliCount = data.meliData ? Object.keys(data.meliData).length : 0;
+    console.log(
+      `[StockContext] loadFromServer — recebido: ERP=${erpCount} itens, MeLi=${meliCount} itens, lastUpdated=${data.lastUpdated}`
+    );
+
     return data;
-  } catch {
+  } catch (err) {
+    console.error("[StockContext] loadFromServer — erro:", err);
     return null;
   }
 }

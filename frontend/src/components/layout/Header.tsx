@@ -34,32 +34,16 @@ export default function Header({
           display: "flex",
           alignItems: "center",
           gap: 10,
-          fontFamily: "Syne, sans-serif",
-          fontWeight: 800,
-          fontSize: 17,
-          letterSpacing: "-0.4px",
-          color: "var(--ink)",
         }}
       >
-        <div
+        <img
+          src="/logo-seralle.webp"
+          alt="Serallê Calçados"
           style={{
-            width: 30,
-            height: 30,
-            background: "var(--accent)",
-            clipPath: "polygon(0 0, 100% 0, 100% 72%, 72% 100%, 0 100%)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 13,
-            fontWeight: 900,
-            color: "white",
-            fontFamily: "DM Mono, monospace",
-            flexShrink: 0,
+            height: 32,
+            objectFit: "contain",
           }}
-        >
-          S
-        </div>
-        StockSync
+        />
       </div>
 
       {/* Meta */}

@@ -16,6 +16,16 @@ export const dynamic = "force-dynamic";
 const DATA_DIR = path.join(process.cwd(), ".data");
 const DATA_FILE = path.join(DATA_DIR, "stock-state.json");
 
+// Headers para evitar qualquer tipo de cache
+const NO_CACHE_HEADERS = {
+  "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+  "Pragma": "no-cache",
+  "Expires": "0",
+};
+
+// Log do caminho uma vez na inicialização
+console.log(`[stock-data] Diretório de dados: ${DATA_DIR}`);
+
 async function ensureDir() {
   try {
     await fs.mkdir(DATA_DIR, { recursive: true });
@@ -30,12 +40,25 @@ async function ensureDir() {
 export async function GET() {
   try {
     await ensureDir();
+
+    // Verifica se o arquivo existe antes de ler
+    try {
+      await fs.access(DATA_FILE);
+    } catch {
+      console.log("[stock-data] GET — arquivo não existe ainda em:", DATA_FILE);
+      return NextResponse.json({ empty: true }, { headers: NO_CACHE_HEADERS });
+    }
+
     const raw = await fs.readFile(DATA_FILE, "utf-8");
     const data = JSON.parse(raw);
-    return NextResponse.json(data);
-  } catch {
-    // Arquivo não existe ainda — retorna estado vazio
-    return NextResponse.json({ empty: true });
+
+    const sizeKB = (Buffer.byteLength(raw) / 1024).toFixed(0);
+    console.log(`[stock-data] GET — retornando ${sizeKB} KB (lastUpdated: ${data.lastUpdated ?? "N/A"})`);
+
+    return NextResponse.json(data, { headers: NO_CACHE_HEADERS });
+  } catch (err) {
+    console.error("[stock-data] GET — erro ao ler arquivo:", DATA_FILE, err);
+    return NextResponse.json({ empty: true }, { headers: NO_CACHE_HEADERS });
   }
 }
 
@@ -58,14 +81,14 @@ export async function POST(req: NextRequest) {
     await fs.writeFile(DATA_FILE, JSON.stringify(body), "utf-8");
 
     const sizeKB = (Buffer.byteLength(JSON.stringify(body)) / 1024).toFixed(0);
-    console.log(`[stock-data] ✓ Dados salvos (${sizeKB} KB) em ${body.savedAt}`);
+    console.log(`[stock-data] ✓ POST — Dados salvos (${sizeKB} KB) em ${body.savedAt} → ${DATA_FILE}`);
 
-    return NextResponse.json({ success: true, savedAt: body.savedAt });
+    return NextResponse.json({ success: true, savedAt: body.savedAt }, { headers: NO_CACHE_HEADERS });
   } catch (err) {
-    console.error("[stock-data] Erro ao salvar:", err);
+    console.error("[stock-data] POST — Erro ao salvar:", DATA_FILE, err);
     return NextResponse.json(
       { error: `Erro ao salvar: ${String(err)}` },
-      { status: 500 }
+      { status: 500, headers: NO_CACHE_HEADERS }
     );
   }
 }
@@ -76,9 +99,9 @@ export async function POST(req: NextRequest) {
 export async function DELETE() {
   try {
     await fs.unlink(DATA_FILE);
-    console.log("[stock-data] ✓ Dados limpos");
-    return NextResponse.json({ success: true });
+    console.log("[stock-data] ✓ DELETE — Dados limpos:", DATA_FILE);
+    return NextResponse.json({ success: true }, { headers: NO_CACHE_HEADERS });
   } catch {
-    return NextResponse.json({ success: true }); // já não existia
+    return NextResponse.json({ success: true }, { headers: NO_CACHE_HEADERS }); // já não existia
   }
 }

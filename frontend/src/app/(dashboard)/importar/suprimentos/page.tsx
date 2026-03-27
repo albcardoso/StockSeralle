@@ -66,6 +66,8 @@ export default function ImportarSuprimentosPage() {
         color="var(--blue)"
         bg="var(--blue-bg)"
         onFile={handleFile}
+        redirectTo="/fluxo-suprimentos"
+        redirectLabel="Suprimentos"
       />
 
       <FormatHint>

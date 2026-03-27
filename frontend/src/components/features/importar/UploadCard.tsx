@@ -12,6 +12,7 @@ interface UploadCardProps {
   accept?: string;
   onFile: (file: File) => Promise<void>;
   redirectTo?: string;
+  redirectLabel?: string;
 }
 
 export default function UploadCard({
@@ -23,6 +24,7 @@ export default function UploadCard({
   accept = ".xlsx,.xls,.csv",
   onFile,
   redirectTo = "/conciliacao",
+  redirectLabel = "Ver Conciliação",
 }: UploadCardProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
@@ -98,7 +100,7 @@ export default function UploadCard({
                   cursor: "pointer",
                 }}
               >
-                Ver Conciliação →
+                {redirectLabel} →
               </button>
               <button
                 onClick={() => { setStatus("idle"); setFileName(null); }}
