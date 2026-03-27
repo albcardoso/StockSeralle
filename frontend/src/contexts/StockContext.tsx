@@ -50,7 +50,7 @@ function recompute(
   return mergeData(erpData, meliData);
 }
 
-// ── Persistência server-side ───────────────────────────────────────────────────
+// ── Persistência server-side (por fonte individual) ─────────────────────────
 
 interface PersistedState {
   erpData: Record<string, number>;
@@ -64,40 +64,78 @@ interface PersistedState {
   empty?: boolean;
 }
 
-/** Salva estado no servidor. Retorna Promise para permitir await quando necessário. */
-function saveToServer(state: StockState): Promise<boolean> {
-  const payload: PersistedState = {
-    erpData: state.erpData,
-    vtexMap: state.vtexMap,
-    meliData: state.meliData,
-    erpFileName: state.erpFileName,
-    vtexFileName: state.vtexFileName,
-    meliFileName: state.meliFileName,
-    lastUpdated: state.lastUpdated?.toISOString() ?? null,
-  };
-
-  return fetch("/api/stock-data", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  })
-    .then(async (r) => {
-      if (!r.ok) {
-        const text = await r.text().catch(() => "");
-        console.warn("[StockContext] Erro ao salvar no servidor:", r.status, text);
-        return false;
-      }
-      const result = await r.json().catch(() => ({}));
-      console.log("[StockContext] ✓ Dados salvos no servidor em", result.savedAt);
-      return true;
-    })
-    .catch((err) => {
-      console.warn("[StockContext] Erro ao salvar:", err);
-      return false;
-    });
+/**
+ * Comprime uma string com gzip usando a CompressionStream API do browser.
+ * Retorna um Uint8Array comprimido.
+ */
+async function gzipCompress(text: string): Promise<Uint8Array> {
+  const encoder = new TextEncoder();
+  const stream = new Blob([encoder.encode(text)])
+    .stream()
+    .pipeThrough(new CompressionStream("gzip"));
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const totalLen = chunks.reduce((sum, c) => sum + c.length, 0);
+  const result = new Uint8Array(totalLen);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return result;
 }
 
-/** Carrega estado do servidor (com cache-busting para garantir dados frescos). */
+/**
+ * Salva UMA fonte de dados no servidor.
+ * Comprime com gzip para caber no limite de 4.5MB da Vercel
+ * (a planilha VTEX com 142K linhas tem ~15MB em JSON, mas ~1-2MB comprimida).
+ */
+async function saveSource(
+  source: "erp" | "vtex" | "meli",
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  payload: Record<string, any>
+): Promise<boolean> {
+  try {
+    const json = JSON.stringify({ source, ...payload });
+    const jsonSizeKB = (json.length / 1024).toFixed(0);
+
+    // Comprime com gzip para payloads grandes
+    const compressed = await gzipCompress(json);
+    const compressedSizeKB = (compressed.length / 1024).toFixed(0);
+
+    console.log(
+      `[StockContext] Salvando ${source}: ${jsonSizeKB} KB → ${compressedSizeKB} KB gzip`
+    );
+
+    const r = await fetch("/api/stock-data", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/gzip",
+        "Content-Encoding": "gzip",
+      },
+      body: compressed,
+    });
+
+    if (!r.ok) {
+      const text = await r.text().catch(() => "");
+      console.warn(`[StockContext] Erro ao salvar ${source}:`, r.status, text);
+      return false;
+    }
+    const result = await r.json().catch(() => ({}));
+    console.log(`[StockContext] ✓ ${source} salvo no servidor em`, result.savedAt);
+    return true;
+  } catch (err) {
+    console.warn(`[StockContext] Erro ao salvar ${source}:`, err);
+    return false;
+  }
+}
+
+/** Carrega estado combinado do servidor (GET retorna todas as fontes juntas). */
 async function loadFromServer(): Promise<PersistedState | null> {
   try {
     // Cache-busting: adiciona timestamp para evitar cache do browser
@@ -122,9 +160,10 @@ async function loadFromServer(): Promise<PersistedState | null> {
     }
 
     const erpCount = data.erpData ? Object.keys(data.erpData).length : 0;
+    const vtexCount = data.vtexMap ? Object.keys(data.vtexMap).length : 0;
     const meliCount = data.meliData ? Object.keys(data.meliData).length : 0;
     console.log(
-      `[StockContext] loadFromServer — recebido: ERP=${erpCount} itens, MeLi=${meliCount} itens, lastUpdated=${data.lastUpdated}`
+      `[StockContext] loadFromServer — recebido: ERP=${erpCount}, VTEX=${vtexCount}, MeLi=${meliCount}, lastUpdated=${data.lastUpdated}`
     );
 
     return data;
@@ -163,29 +202,38 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     isRestoring.current = true;
     loadFromServer().then((saved) => {
-      if (saved && saved.erpData && saved.meliData) {
-        const erpData = saved.erpData;
+      if (saved) {
+        const erpData = saved.erpData ?? {};
         const vtexMap = saved.vtexMap ?? {};
-        const meliData = saved.meliData;
-        const conciliacao = recompute(erpData, vtexMap, meliData);
+        const meliData = saved.meliData ?? {};
 
-        setState({
-          erpData,
-          vtexMap,
-          meliData,
-          conciliacao,
-          supplyFlow: [],
-          erpFileName: saved.erpFileName,
-          vtexFileName: saved.vtexFileName,
-          meliFileName: saved.meliFileName,
-          supplyFlowFileName: null,
-          lastUpdated: saved.lastUpdated ? new Date(saved.lastUpdated) : null,
-          isLoading: false,
-        });
+        const hasData = Object.keys(erpData).length > 0
+          || Object.keys(vtexMap).length > 0
+          || Object.keys(meliData).length > 0;
 
-        console.log(
-          `[StockContext] ✓ Dados restaurados do servidor (${conciliacao.length} itens, importado em ${saved.lastUpdated})`
-        );
+        if (hasData) {
+          const conciliacao = recompute(erpData, vtexMap, meliData);
+
+          setState({
+            erpData,
+            vtexMap,
+            meliData,
+            conciliacao,
+            supplyFlow: [],
+            erpFileName: saved.erpFileName ?? null,
+            vtexFileName: saved.vtexFileName ?? null,
+            meliFileName: saved.meliFileName ?? null,
+            supplyFlowFileName: null,
+            lastUpdated: saved.lastUpdated ? new Date(saved.lastUpdated) : null,
+            isLoading: false,
+          });
+
+          console.log(
+            `[StockContext] ✓ Dados restaurados do servidor (${conciliacao.length} itens conciliados)`
+          );
+        } else {
+          setState((prev) => ({ ...prev, isLoading: false }));
+        }
       } else {
         setState((prev) => ({ ...prev, isLoading: false }));
       }
@@ -216,8 +264,12 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
         conciliacao: recompute(data, prev.vtexMap, prev.meliData),
         lastUpdated: new Date(),
       };
-      // Salva no servidor após atualizar
-      saveToServer(next);
+      // Salva apenas a fonte ERP no servidor
+      saveSource("erp", {
+        erpData: data,
+        erpFileName: fileName,
+        lastUpdated: new Date().toISOString(),
+      });
       return next;
     });
   }, []);
@@ -232,7 +284,12 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
           conciliacao: recompute(prev.erpData, data, prev.meliData),
           lastUpdated: new Date(),
         };
-        saveToServer(next);
+        // Salva apenas a fonte VTEX no servidor
+        saveSource("vtex", {
+          vtexMap: data,
+          vtexFileName: fileName,
+          lastUpdated: new Date().toISOString(),
+        });
         return next;
       });
     },
@@ -249,7 +306,12 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
           conciliacao: recompute(prev.erpData, prev.vtexMap, data),
           lastUpdated: new Date(),
         };
-        saveToServer(next);
+        // Salva apenas a fonte MeLi no servidor
+        saveSource("meli", {
+          meliData: data,
+          meliFileName: fileName,
+          lastUpdated: new Date().toISOString(),
+        });
         return next;
       });
     },
