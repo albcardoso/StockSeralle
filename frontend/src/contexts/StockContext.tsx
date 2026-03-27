@@ -118,7 +118,7 @@ async function saveSource(
         "Content-Type": "application/gzip",
         "Content-Encoding": "gzip",
       },
-      body: compressed,
+      body: new Blob([compressed], { type: "application/gzip" }),
     });
 
     if (!r.ok) {
