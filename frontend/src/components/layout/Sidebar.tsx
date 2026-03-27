@@ -32,6 +32,7 @@ const navItems: { section: string; items: NavItem[] }[] = [
     section: "Importação",
     items: [
       { href: "/importar/space", icon: "↑", label: "Importar Space" },
+      { href: "/importar/space-api", icon: "⚡", label: "Importar Space API" },
       { href: "/importar/vtex", icon: "↑", label: "Importar Vtex" },
       { href: "/importar/meli", icon: "↑", label: "Importar MeLi" },
     ],
