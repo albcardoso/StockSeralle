@@ -22,15 +22,18 @@ export const maxDuration = 60; // segundos
 
 const COLLECTION = "stock_state";
 
+// Tipo do documento com _id string (não ObjectId)
+interface StockDoc {
+  _id: string;
+  [key: string]: unknown;
+}
+
 // Headers para evitar qualquer tipo de cache
 const NO_CACHE_HEADERS = {
   "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
   Pragma: "no-cache",
   Expires: "0",
 };
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const filterById = (id: string) => ({ _id: id } as any);
 
 /**
  * Extrai o body do request, descomprimindo gzip se necessário.
@@ -59,7 +62,7 @@ async function parseBody(req: NextRequest): Promise<Record<string, unknown>> {
 export async function GET() {
   try {
     const db = await getDb();
-    const col = db.collection(COLLECTION);
+    const col = db.collection<StockDoc>(COLLECTION);
 
     // Busca todos os documentos de uma vez
     const docs = await col.find({ _id: { $in: ["erp", "vtex", "meli"] } }).toArray();
@@ -113,10 +116,10 @@ export async function POST(req: NextRequest) {
     const savedAt = new Date().toISOString();
     const source = body.source as string | undefined;
     const db = await getDb();
-    const col = db.collection(COLLECTION);
+    const col = db.collection<StockDoc>(COLLECTION);
 
     if (source === "erp") {
-      await col.replaceOne(filterById("erp"), {
+      await col.replaceOne({ _id: "erp" }, {
         _id: "erp",
         erpData: body.erpData,
         erpFileName: body.erpFileName,
@@ -128,7 +131,7 @@ export async function POST(req: NextRequest) {
       console.log(`[stock-data] ✓ POST erp — ${sizeKB} KB salvo em ${savedAt}`);
 
     } else if (source === "vtex") {
-      await col.replaceOne(filterById("vtex"), {
+      await col.replaceOne({ _id: "vtex" }, {
         _id: "vtex",
         vtexMap: body.vtexMap,
         vtexFileName: body.vtexFileName,
@@ -140,7 +143,7 @@ export async function POST(req: NextRequest) {
       console.log(`[stock-data] ✓ POST vtex — ${entries} SKUs salvos em ${savedAt}`);
 
     } else if (source === "meli") {
-      await col.replaceOne(filterById("meli"), {
+      await col.replaceOne({ _id: "meli" }, {
         _id: "meli",
         meliData: body.meliData,
         meliFileName: body.meliFileName,
@@ -154,7 +157,7 @@ export async function POST(req: NextRequest) {
     } else {
       // Fallback legado
       (body as Record<string, unknown>).savedAt = savedAt;
-      await col.replaceOne(filterById("legacy"), {
+      await col.replaceOne({ _id: "legacy" }, {
         _id: "legacy",
         ...body,
       }, { upsert: true });
@@ -181,7 +184,7 @@ export async function POST(req: NextRequest) {
 export async function DELETE() {
   try {
     const db = await getDb();
-    await db.collection(COLLECTION).deleteMany({});
+    await db.collection<StockDoc>(COLLECTION).deleteMany({});
     console.log("[stock-data] ✓ DELETE — Todos os dados limpos do MongoDB");
     return NextResponse.json({ success: true }, { headers: NO_CACHE_HEADERS });
   } catch (err) {
