@@ -526,11 +526,13 @@ const MELI_FIXED = {
 } as const;
 
 /**
- * Detecta dinamicamente a coluna "Aptas para venda" nas primeiras linhas do header.
+ * Detecta dinamicamente a coluna "Aptas para venda" nas linhas de header real.
+ * Busca apenas a partir da row 9 para evitar falso positivo na área de resumo.
  * Retorna MELI_FIXED.APTAS_COL se não encontrar.
  */
 function detectMeliAptasCol(raw: unknown[][]): number {
-  for (let r = 0; r < Math.min(raw.length, MELI_FIXED.DATA_START_ROW); r++) {
+  const HEADER_START = 9;
+  for (let r = HEADER_START; r < Math.min(raw.length, MELI_FIXED.DATA_START_ROW); r++) {
     const row = (raw[r] as unknown[]) ?? [];
     for (let c = 0; c < row.length; c++) {
       const v = norm(String(row[c] ?? ""));
@@ -549,10 +551,18 @@ function detectMeliAptasCol(raw: unknown[][]): number {
 /**
  * Coluna fixa "Entrada pendente" = col N (índice 13) da planilha ML FULL.
  * Tenta detectar dinamicamente no header; fallback = 13.
+ *
+ * IMPORTANTE: Busca apenas nas linhas de header real (rows 9+),
+ * ignorando a área de resumo (rows 0-8) que contém "Entrada pendente"
+ * como rótulo de status (col D), não como header de dados.
  */
 function detectMeliEntradaPendenteCol(raw: unknown[][]): number {
   const FALLBACK = 13; // coluna N
-  for (let r = 0; r < Math.min(raw.length, MELI_FIXED.DATA_START_ROW); r++) {
+  // Pula as linhas de resumo (0-8) — o texto "Entrada pendente" aparece
+  // como rótulo de status na col D (index 3), que na verdade é a coluna SKU.
+  // Os headers reais de dados ficam nas linhas 9-11.
+  const HEADER_START = 9;
+  for (let r = HEADER_START; r < Math.min(raw.length, MELI_FIXED.DATA_START_ROW); r++) {
     const row = (raw[r] as unknown[]) ?? [];
     for (let c = 0; c < row.length; c++) {
       const v = norm(String(row[c] ?? ""));

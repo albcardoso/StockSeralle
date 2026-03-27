@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   // Força xlsx a ser carregado diretamente do node_modules no servidor (não bundleado pelo Turbopack).
   // Necessário porque xlsx usa built-ins do Node.js (zlib, Buffer) que precisam da versão nativa.
-  serverExternalPackages: ["xlsx"],
+  serverExternalPackages: ["xlsx", "mongodb"],
 
   // Backend API URL
   env: {

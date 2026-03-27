@@ -1,69 +1,62 @@
 /**
- * POST /api/stock-data  — salva os dados processados no servidor (JSON file)
+ * POST /api/stock-data  — salva os dados processados no MongoDB
  * GET  /api/stock-data  — carrega os dados da última importação
+ * DELETE /api/stock-data — limpa os dados salvos
  *
- * Persistência simples em arquivo JSON no disco do servidor.
+ * Persistência em MongoDB — funciona em produção (serverless, Docker, etc.).
+ * Usa um único documento na collection "stock_state" com _id fixo "current".
  * Qualquer usuário que acessar verá a última importação disponível.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { promises as fs } from "fs";
-import path from "path";
+import { getDb } from "@/lib/mongodb";
 
 export const dynamic = "force-dynamic";
 
-// Diretório de dados persistentes (relativo à raiz do projeto)
-const DATA_DIR = path.join(process.cwd(), ".data");
-const DATA_FILE = path.join(DATA_DIR, "stock-state.json");
+const COLLECTION = "stock_state";
+const DOC_ID = "current";
 
 // Headers para evitar qualquer tipo de cache
 const NO_CACHE_HEADERS = {
   "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-  "Pragma": "no-cache",
-  "Expires": "0",
+  Pragma: "no-cache",
+  Expires: "0",
 };
 
-// Log do caminho uma vez na inicialização
-console.log(`[stock-data] Diretório de dados: ${DATA_DIR}`);
-
-async function ensureDir() {
-  try {
-    await fs.mkdir(DATA_DIR, { recursive: true });
-  } catch {
-    // já existe
-  }
-}
+// Helper: filtro por _id fixo (MongoDB aceita string como _id)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const filter = { _id: DOC_ID } as any;
 
 /**
  * GET — retorna o estado salvo (ou vazio se não houver)
  */
 export async function GET() {
   try {
-    await ensureDir();
+    const db = await getDb();
+    const doc = await db.collection(COLLECTION).findOne(filter);
 
-    // Verifica se o arquivo existe antes de ler
-    try {
-      await fs.access(DATA_FILE);
-    } catch {
-      console.log("[stock-data] GET — arquivo não existe ainda em:", DATA_FILE);
+    if (!doc) {
+      console.log("[stock-data] GET — nenhum dado salvo no MongoDB");
       return NextResponse.json({ empty: true }, { headers: NO_CACHE_HEADERS });
     }
 
-    const raw = await fs.readFile(DATA_FILE, "utf-8");
-    const data = JSON.parse(raw);
+    // Remove _id do response (não é necessário no frontend)
+    const { _id, ...data } = doc;
 
-    const sizeKB = (Buffer.byteLength(raw) / 1024).toFixed(0);
-    console.log(`[stock-data] GET — retornando ${sizeKB} KB (lastUpdated: ${data.lastUpdated ?? "N/A"})`);
+    const sizeKB = (JSON.stringify(data).length / 1024).toFixed(0);
+    console.log(
+      `[stock-data] GET — retornando ${sizeKB} KB do MongoDB (lastUpdated: ${data.lastUpdated ?? "N/A"})`
+    );
 
     return NextResponse.json(data, { headers: NO_CACHE_HEADERS });
   } catch (err) {
-    console.error("[stock-data] GET — erro ao ler arquivo:", DATA_FILE, err);
+    console.error("[stock-data] GET — erro ao ler do MongoDB:", err);
     return NextResponse.json({ empty: true }, { headers: NO_CACHE_HEADERS });
   }
 }
 
 /**
- * POST — salva o estado completo no disco
+ * POST — salva o estado completo no MongoDB (upsert com _id fixo)
  */
 export async function POST(req: NextRequest) {
   try {
@@ -73,19 +66,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Payload inválido" }, { status: 400 });
     }
 
-    await ensureDir();
-
     // Adiciona timestamp do servidor
     body.savedAt = new Date().toISOString();
 
-    await fs.writeFile(DATA_FILE, JSON.stringify(body), "utf-8");
+    const db = await getDb();
+    await db.collection(COLLECTION).replaceOne(
+      filter,
+      { _id: DOC_ID, ...body },
+      { upsert: true }
+    );
 
-    const sizeKB = (Buffer.byteLength(JSON.stringify(body)) / 1024).toFixed(0);
-    console.log(`[stock-data] ✓ POST — Dados salvos (${sizeKB} KB) em ${body.savedAt} → ${DATA_FILE}`);
+    const sizeKB = (JSON.stringify(body).length / 1024).toFixed(0);
+    console.log(
+      `[stock-data] ✓ POST — Dados salvos no MongoDB (${sizeKB} KB) em ${body.savedAt}`
+    );
 
-    return NextResponse.json({ success: true, savedAt: body.savedAt }, { headers: NO_CACHE_HEADERS });
+    return NextResponse.json(
+      { success: true, savedAt: body.savedAt },
+      { headers: NO_CACHE_HEADERS }
+    );
   } catch (err) {
-    console.error("[stock-data] POST — Erro ao salvar:", DATA_FILE, err);
+    console.error("[stock-data] POST — Erro ao salvar no MongoDB:", err);
     return NextResponse.json(
       { error: `Erro ao salvar: ${String(err)}` },
       { status: 500, headers: NO_CACHE_HEADERS }
@@ -94,14 +95,16 @@ export async function POST(req: NextRequest) {
 }
 
 /**
- * DELETE — limpa os dados salvos (usado pelo "Novo import")
+ * DELETE — limpa os dados salvos
  */
 export async function DELETE() {
   try {
-    await fs.unlink(DATA_FILE);
-    console.log("[stock-data] ✓ DELETE — Dados limpos:", DATA_FILE);
+    const db = await getDb();
+    await db.collection(COLLECTION).deleteOne(filter);
+    console.log("[stock-data] ✓ DELETE — Dados limpos do MongoDB");
     return NextResponse.json({ success: true }, { headers: NO_CACHE_HEADERS });
-  } catch {
-    return NextResponse.json({ success: true }, { headers: NO_CACHE_HEADERS }); // já não existia
+  } catch (err) {
+    console.error("[stock-data] DELETE — Erro:", err);
+    return NextResponse.json({ success: true }, { headers: NO_CACHE_HEADERS });
   }
 }
