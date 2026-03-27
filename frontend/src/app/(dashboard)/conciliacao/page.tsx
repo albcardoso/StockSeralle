@@ -7,7 +7,7 @@ import ConciliacaoTable from "@/components/features/conciliacao/ConciliacaoTable
 import type { ConciliacaoItem } from "@/types";
 
 export default function ConciliacaoPage() {
-  const { conciliacao, erpFileName, vtexFileName, meliFileName, clearAll } = useStock();
+  const { conciliacao, erpFileName, vtexFileName, meliFileName, lastUpdated, isLoading, clearAll } = useStock();
   const router = useRouter();
   const [filter, setFilter] = useState<"all" | "div" | "ok" | "erp-only" | "meli-only">("all");
   const [search, setSearch] = useState("");
@@ -35,6 +35,18 @@ export default function ConciliacaoPage() {
 
     return matchesFilter && matchesSearch;
   }), [conciliacao, filter, search]);
+
+  // Carregando dados do servidor
+  if (isLoading) {
+    return (
+      <div style={{ padding: "60px 24px", textAlign: "center" }}>
+        <div style={{ fontSize: 28, marginBottom: 10 }}>⏳</div>
+        <div style={{ fontFamily: "Syne, sans-serif", fontWeight: 700, fontSize: 15, color: "var(--slate)" }}>
+          Carregando dados da última importação...
+        </div>
+      </div>
+    );
+  }
 
   // Nenhum dado importado ainda
   if (conciliacao.length === 0) {
@@ -103,6 +115,11 @@ export default function ConciliacaoPage() {
             {vtexFileName && <FileBadge label={vtexFileName} color="var(--purple)" bg="var(--purple-bg)" />}
             {meliFileName && <FileBadge label={meliFileName} color="var(--amber)" bg="var(--amber-bg)" />}
           </div>
+          {lastUpdated && (
+            <div style={{ marginTop: 6, fontSize: 11, fontFamily: "DM Mono, monospace", color: "var(--mist)" }}>
+              Última importação: {lastUpdated.toLocaleDateString("pt-BR")} às {lastUpdated.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+            </div>
+          )}
         </div>
         <button
           onClick={clearAll}
