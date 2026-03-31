@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useStock } from "@/contexts/StockContext";
 import type { MeliItem } from "@/types";
@@ -148,7 +148,15 @@ function clearMeliCache() {
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
-export default function ImportarMeliApiPage() {
+export default function ImportarMeliApiPageWrapper() {
+  return (
+    <Suspense fallback={<div className="p-6 text-gray-400">Carregando...</div>}>
+      <ImportarMeliApiPage />
+    </Suspense>
+  );
+}
+
+function ImportarMeliApiPage() {
   const { setMeliData, meliFileName, lastUpdated } = useStock();
   const searchParams = useSearchParams();
 
