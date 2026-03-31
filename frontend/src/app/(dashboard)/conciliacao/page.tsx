@@ -3,14 +3,30 @@
 import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useStock } from "@/contexts/StockContext";
+import { useSettings } from "@/contexts/SettingsContext";
 import ConciliacaoTable from "@/components/features/conciliacao/ConciliacaoTable";
 import type { ConciliacaoItem } from "@/types";
+import type { ConciliationScenario } from "@/contexts/StockContext";
+
+const SCENARIO_LABELS: Record<ConciliationScenario, string> = {
+  api_space_api_meli: "API Space + API MeLi (direto por SKU)",
+  api_space_planilha_meli: "API Space + Planilha MeLi (direto por SKU)",
+  planilha_space_vtex_api_meli: "Planilha Space + VTEX + API MeLi (via mapeamento)",
+  planilha_space_vtex_planilha_meli: "3 Planilhas: Space + VTEX + MeLi (via mapeamento)",
+};
 
 export default function ConciliacaoPage() {
-  const { conciliacao, erpFileName, vtexFileName, meliFileName, lastUpdated, isLoading, clearAll } = useStock();
+  const {
+    conciliacao, erpFileName, vtexFileName, meliFileName,
+    erpSource, meliSource, lastUpdated, isLoading, clearAll,
+    getConciliationScenario, canReconcile,
+  } = useStock();
+  const { enableImport } = useSettings();
   const router = useRouter();
   const [filter, setFilter] = useState<"all" | "div" | "ok" | "erp-only" | "meli-only">("all");
   const [search, setSearch] = useState("");
+
+  const scenario = getConciliationScenario();
 
   const counts = useMemo(() => ({
     div: conciliacao.filter((i) => i.status === "divergente").length,
@@ -48,8 +64,8 @@ export default function ConciliacaoPage() {
     );
   }
 
-  // Nenhum dado importado ainda
-  if (conciliacao.length === 0) {
+  // Nenhum dado — guia de como carregar dados
+  if (!canReconcile) {
     return (
       <div>
         <div style={{ marginBottom: 24 }}>
@@ -61,43 +77,16 @@ export default function ConciliacaoPage() {
           </p>
         </div>
 
-        {/* Guia de importação — 3 passos */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 20 }}>
-          <StepCard
-            step={1}
-            title="Importe o Space (ERP)"
-            description="CSV de estoque"
-            done={!!erpFileName}
-            fileName={erpFileName}
-            onClick={() => router.push("/importar/space")}
-            color="var(--purple)"
-            bg="var(--purple-bg)"
-          />
-          <StepCard
-            step={2}
-            title="Importe a VTEX"
-            description="Mapeamento SKU → ERP"
-            done={!!vtexFileName}
-            fileName={vtexFileName}
-            onClick={() => router.push("/importar/vtex")}
-            color="var(--purple)"
-            bg="var(--purple-bg)"
-          />
-          <StepCard
-            step={3}
-            title="Importe o MeLi"
-            description="Gerenciador de Anúncios"
-            done={!!meliFileName}
-            fileName={meliFileName}
-            onClick={() => router.push("/importar/meli")}
-            color="var(--amber)"
-            bg="var(--amber-bg)"
-          />
-        </div>
-
-        <div style={{ background: "var(--blue-bg)", border: "1px solid var(--blue-border)", borderRadius: 10, padding: "12px 16px", fontSize: 13, color: "var(--blue)" }}>
-          ℹ️ Importe os 3 arquivos para ver a conciliação completa (Space + VTEX obrigatórios). Os dados ficam disponíveis em toda a sessão.
-        </div>
+        {/* Status das fontes de dados */}
+        <DataSourceStatus
+          erpFileName={erpFileName}
+          erpSource={erpSource}
+          vtexFileName={vtexFileName}
+          meliFileName={meliFileName}
+          meliSource={meliSource}
+          enableImport={enableImport}
+          router={router}
+        />
       </div>
     );
   }
@@ -111,10 +100,32 @@ export default function ConciliacaoPage() {
             Conciliação ERP × MeLi
           </h1>
           <div style={{ display: "flex", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
-            {erpFileName && <FileBadge label={erpFileName} color="var(--purple)" bg="var(--purple-bg)" />}
+            {erpFileName && (
+              <FileBadge
+                label={erpFileName}
+                color={erpSource === "api" ? "var(--blue)" : "var(--purple)"}
+                bg={erpSource === "api" ? "var(--blue-bg)" : "var(--purple-bg)"}
+              />
+            )}
             {vtexFileName && <FileBadge label={vtexFileName} color="var(--purple)" bg="var(--purple-bg)" />}
-            {meliFileName && <FileBadge label={meliFileName} color="var(--amber)" bg="var(--amber-bg)" />}
+            {meliFileName && (
+              <FileBadge
+                label={meliFileName}
+                color={meliSource === "api" ? "var(--blue)" : "var(--amber)"}
+                bg={meliSource === "api" ? "var(--blue-bg)" : "var(--amber-bg)"}
+              />
+            )}
           </div>
+          {scenario && (
+            <div style={{
+              marginTop: 6, fontSize: 11, fontFamily: "DM Mono, monospace",
+              color: "var(--blue)", background: "var(--blue-bg)",
+              padding: "3px 10px", borderRadius: 5, display: "inline-block",
+              border: "1px solid var(--blue-border)",
+            }}>
+              {SCENARIO_LABELS[scenario]}
+            </div>
+          )}
           {lastUpdated && (
             <div style={{ marginTop: 6, fontSize: 11, fontFamily: "DM Mono, monospace", color: "var(--mist)" }}>
               Última importação: {lastUpdated.toLocaleDateString("pt-BR")} às {lastUpdated.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
@@ -163,8 +174,149 @@ export default function ConciliacaoPage() {
 
 // ── Sub-componentes ───────────────────────────────────────────────────────────
 
-function StepCard({ step, title, description, done, fileName, onClick, color, bg }: {
-  step: number; title: string; description: string; done: boolean; fileName: string | null; onClick: () => void; color: string; bg: string;
+/** Mostra o status de cada fonte de dados e os caminhos possíveis */
+function DataSourceStatus({
+  erpFileName, erpSource, vtexFileName, meliFileName, meliSource,
+  enableImport, router,
+}: {
+  erpFileName: string | null;
+  erpSource: string | null;
+  vtexFileName: string | null;
+  meliFileName: string | null;
+  meliSource: string | null;
+  enableImport: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  router: any;
+}) {
+  const hasErp = !!erpFileName;
+  const hasMeli = !!meliFileName;
+  const hasVtex = !!vtexFileName;
+  const erpIsApi = erpSource === "api";
+
+  // Determina o que falta para conciliar
+  const needsErp = !hasErp;
+  const needsMeli = !hasMeli;
+  const needsVtex = hasErp && !erpIsApi && !hasVtex && hasMeli;
+
+  return (
+    <div>
+      {/* Caminho por API (sempre visível) */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{
+          fontFamily: "DM Mono, monospace", fontSize: 10, fontWeight: 500,
+          color: "var(--blue)", letterSpacing: "1px", textTransform: "uppercase",
+          marginBottom: 10,
+        }}>
+          Via Consulta API (recomendado)
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <StepCard
+            step={1}
+            title="Consultar API Space"
+            description="Estoque ERP via API"
+            done={hasErp && erpIsApi}
+            fileName={hasErp && erpIsApi ? erpFileName : null}
+            onClick={() => router.push("/importar/space-api")}
+            color="var(--blue)"
+            bg="var(--blue-bg)"
+            icon="⚡"
+          />
+          <StepCard
+            step={2}
+            title="Consultar API MeLi"
+            description="Vendas via API"
+            done={hasMeli && meliSource === "api"}
+            fileName={hasMeli && meliSource === "api" ? meliFileName : null}
+            onClick={() => router.push("/importar/meli-api")}
+            color="var(--blue)"
+            bg="var(--blue-bg)"
+            icon="⚡"
+          />
+        </div>
+      </div>
+
+      {/* Caminho por planilha (só se importação habilitada) */}
+      {enableImport && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{
+            fontFamily: "DM Mono, monospace", fontSize: 10, fontWeight: 500,
+            color: "var(--purple)", letterSpacing: "1px", textTransform: "uppercase",
+            marginBottom: 10,
+          }}>
+            Via Importação de Planilhas
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
+            <StepCard
+              step={1}
+              title="Importar Space (ERP)"
+              description="CSV de estoque"
+              done={hasErp && !erpIsApi}
+              fileName={hasErp && !erpIsApi ? erpFileName : null}
+              onClick={() => router.push("/importar/space")}
+              color="var(--purple)"
+              bg="var(--purple-bg)"
+              icon="↑"
+            />
+            <StepCard
+              step={2}
+              title="Importar VTEX"
+              description="Mapeamento SKU → ERP"
+              done={hasVtex}
+              fileName={vtexFileName}
+              onClick={() => router.push("/importar/vtex")}
+              color="var(--purple)"
+              bg="var(--purple-bg)"
+              icon="↑"
+            />
+            <StepCard
+              step={3}
+              title="Importar MeLi"
+              description="Gerenciador de Anúncios"
+              done={hasMeli && meliSource !== "api"}
+              fileName={hasMeli && meliSource !== "api" ? meliFileName : null}
+              onClick={() => router.push("/importar/meli")}
+              color="var(--amber)"
+              bg="var(--amber-bg)"
+              icon="↑"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Info box */}
+      <div style={{
+        background: needsErp || needsMeli
+          ? "var(--amber-bg)"
+          : needsVtex
+            ? "var(--amber-bg)"
+            : "var(--blue-bg)",
+        border: `1px solid ${needsErp || needsMeli ? "var(--amber-border)" : "var(--blue-border)"}`,
+        borderRadius: 10, padding: "12px 16px", fontSize: 13,
+        color: needsErp || needsMeli ? "var(--amber)" : "var(--blue)",
+      }}>
+        {needsErp && needsMeli && (
+          <>⚡ Consulte as APIs do Space e MeLi para conciliar automaticamente por SKU (sem VTEX). {enableImport && "Ou importe as 3 planilhas (Space + VTEX + MeLi)."}</>
+        )}
+        {needsErp && !needsMeli && (
+          <>Dados do MeLi carregados. Falta o ERP — consulte a API Space ou importe a planilha Space{!erpIsApi && enableImport ? " + VTEX" : ""}.</>
+        )}
+        {!needsErp && needsMeli && (
+          <>Dados do ERP carregados. Falta o MeLi — consulte a API MeLi ou importe a planilha MeLi.</>
+        )}
+        {needsVtex && (
+          <>ERP veio de planilha — importe também a VTEX para mapear SKU → cod_produto. Ou use a API Space (que já retorna SKU diretamente).</>
+        )}
+        {!needsErp && !needsMeli && !needsVtex && (
+          <>Os dados estão carregados mas não foi possível conciliar. Verifique se os SKUs batem entre as fontes.</>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StepCard({ step, title, description, done, fileName, onClick, color, bg, icon }: {
+  step: number; title: string; description: string; done: boolean; fileName: string | null;
+  onClick: () => void; color: string; bg: string; icon?: string;
 }) {
   return (
     <div onClick={!done ? onClick : undefined}
@@ -174,7 +326,7 @@ function StepCard({ step, title, description, done, fileName, onClick, color, bg
         <span style={{ fontWeight: 600, fontSize: 14, color: done ? color : "var(--ink)" }}>{title}</span>
       </div>
       <div style={{ fontSize: 12, color: done ? color : "var(--mist)" }}>
-        {done ? `✓ ${fileName}` : `Clique para importar · ${description}`}
+        {done ? `✓ ${fileName}` : `Clique para ${icon === "⚡" ? "consultar" : "importar"} · ${description}`}
       </div>
     </div>
   );

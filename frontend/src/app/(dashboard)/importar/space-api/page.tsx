@@ -62,21 +62,55 @@ const PAGE_SIZES = [25, 50, 100, 200];
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
+// ── Cache em sessionStorage para manter dados entre navegações ─────────────
+
+const CACHE_KEY = "stocksync_space_api_cache";
+
+interface CachedQuery {
+  rawData: SpaceApiRow[];
+  filters: FilterState;
+  imported: boolean;
+  timestamp: string;
+}
+
+function loadCache(): CachedQuery | null {
+  try {
+    const raw = sessionStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as CachedQuery;
+  } catch { return null; }
+}
+
+function saveCache(data: CachedQuery) {
+  try {
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify(data));
+  } catch { /* sessionStorage cheio — ignora */ }
+}
+
+function clearCache() {
+  try { sessionStorage.removeItem(CACHE_KEY); } catch {}
+}
+
 export default function ImportarSpaceApiPage() {
   const { setErpData, erpFileName, lastUpdated } = useStock();
 
-  const [filters, setFilters] = useState<FilterState>({
-    periodoInicio: defaultInicio(),
-    periodoFim: defaultFim(),
-    idEmpresa: 98,
-    empresaEstoque: 98,
-    empresaVenda: 98,
-  });
+  // Carrega cache da última consulta (se existir)
+  const cached = useMemo(() => loadCache(), []);
+
+  const [filters, setFilters] = useState<FilterState>(
+    cached?.filters ?? {
+      periodoInicio: defaultInicio(),
+      periodoFim: defaultFim(),
+      idEmpresa: 98,
+      empresaEstoque: 98,
+      empresaVenda: 98,
+    }
+  );
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [rawData, setRawData] = useState<SpaceApiRow[] | null>(null);
-  const [imported, setImported] = useState(false);
+  const [rawData, setRawData] = useState<SpaceApiRow[] | null>(cached?.rawData ?? null);
+  const [imported, setImported] = useState(cached?.imported ?? false);
 
   // ── Filtro por coluna ────────────────────────────────────────────────────
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
@@ -147,8 +181,11 @@ export default function ImportarSpaceApiPage() {
       const rows = Array.isArray(json.data) ? json.data : [];
       if (rows.length === 0) {
         setError("Nenhum registro retornado pela API Space para os filtros informados.");
+        clearCache();
       } else {
         setRawData(rows);
+        setImported(false);
+        saveCache({ rawData: rows, filters, imported: false, timestamp: new Date().toISOString() });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -164,62 +201,120 @@ export default function ImportarSpaceApiPage() {
 
     const firstRow = rawData[0];
     const keys = Object.keys(firstRow);
-    const norm = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const norm = (s: string) => s.toUpperCase().replace(/[^A-Z0-9_]/g, "");
 
+    // ── De-para: nomes da planilha CSV ↔ nomes da API Space ──────────────
+    //
+    // planilha CSV         │ API Space
+    // ─────────────────────┼──────────────────────
+    // CODPRODUTO           │ produto_codigo
+    // (sem equivalente)    │ produto_sku          ← SKU direto! (chave para conciliação sem VTEX)
+    // ESTOQUE_DISPONIVEL   │ estoque
+    // FILIAL               │ empresa_venda
+    // TAMANHO / NUMERACAO  │ tamanho_descricao
+    // PRECO                │ venda_avista
+    // QTD_VENDAS           │ vendas
+    // VALOR_VENDA          │ total_vendido
+    // MARCA                │ marca_descricao
+
+    // SKU direto (produto_sku) — quando existe, usa como chave (dispensa VTEX)
+    const skuKey = keys.find((k) => {
+      const n = norm(k);
+      return n === "PRODUTO_SKU" || n === "PRODUTOSKU" || n === "SKU";
+    });
+
+    // Código do produto (fallback se não tiver SKU)
     const codKey = keys.find((k) => {
       const n = norm(k);
-      return n === "CODPRODUTO" || n === "SKU" || n === "REFID" || n.includes("CODPRODUTO");
+      return (
+        n === "PRODUTO_CODIGO" || n === "PRODUTOCODIGO" ||
+        n === "CODPRODUTO" || n === "COD_PRODUTO" ||
+        n === "REFID" || n.includes("CODPRODUTO")
+      );
     });
 
+    // Estoque
     const estoqueKey = keys.find((k) => {
       const n = norm(k);
-      return n === "ESTOQUEDISPONIVEL" || n.includes("ESTOQUE") || n.includes("SALDO") || n.includes("DISPONIVEL");
+      return (
+        n === "ESTOQUE" ||
+        n === "ESTOQUE_DISPONIVEL" || n === "ESTOQUEDISPONIVEL" ||
+        n.includes("ESTOQUE") || n.includes("SALDO") || n.includes("DISPONIVEL")
+      );
     });
 
+    // Tamanho
     const tamanhoKey = keys.find((k) => {
       const n = norm(k);
-      return n === "TAMANHO" || n === "NUMERACAO" || n === "GRADE" || n.includes("TAMANHO") || n.includes("NUMERACAO");
+      return (
+        n === "TAMANHO_DESCRICAO" || n === "TAMANHODESCRICAO" ||
+        n === "TAMANHO" || n === "NUMERACAO" || n === "GRADE" ||
+        n.includes("TAMANHO") || n.includes("NUMERACAO")
+      );
     });
 
+    // Filial / Empresa de venda
     const filialKey = keys.find((k) => {
       const n = norm(k);
-      return n === "FILIAL" || n === "LOJA" || n === "CODFILIAL";
+      return (
+        n === "EMPRESA_VENDA" || n === "EMPRESAVENDA" ||
+        n === "FILIAL" || n === "LOJA" || n === "CODFILIAL" || n === "COD_FILIAL"
+      );
     });
 
-    if (!codKey || !estoqueKey) {
-      setError(`Colunas necessárias não encontradas. Colunas disponíveis: ${keys.join(", ")}`);
+    // Precisa de ao menos uma chave (SKU ou cod_produto) e estoque
+    const primaryKey = skuKey || codKey;
+    if (!primaryKey || !estoqueKey) {
+      setError(`Colunas necessárias não encontradas. Preciso de (produto_sku ou produto_codigo) + estoque. Colunas disponíveis: ${keys.join(", ")}`);
       return;
     }
 
     const data: Record<string, number> = {};
     let validRows = 0;
+    const usingSku = !!skuKey; // Se tem SKU direto, a chave é SKU (sem VTEX)
 
     for (const row of rawData) {
+      // Filtro por filial/empresa_venda = 98
       if (filialKey) {
         const filial = String(row[filialKey] ?? "").trim();
         if (filial && !filial.includes("98")) continue;
       }
 
-      const cod = String(row[codKey] ?? "").trim();
-      if (!cod) continue;
+      // Chave principal
+      const keyValue = usingSku
+        ? String(row[skuKey!] ?? "").trim()
+        : String(row[codKey!] ?? "").trim();
+      if (!keyValue) continue;
 
       const estoque = Number(row[estoqueKey]) || 0;
-      const tamanho = tamanhoKey ? String(row[tamanhoKey] ?? "").trim() : "";
 
-      const key = tamanho ? `${cod}|${tamanho}` : cod;
-      data[key] = (data[key] || 0) + estoque;
+      if (usingSku) {
+        // Usando SKU direto — chave simples (compatível com MeLi.sku)
+        data[keyValue] = (data[keyValue] || 0) + estoque;
+      } else {
+        // Usando cod_produto — precisa de tamanho para chave composta (requer VTEX)
+        const tamanho = tamanhoKey ? String(row[tamanhoKey] ?? "").trim().replace(/\.0$/, "") : "";
+        const key = tamanho ? `${keyValue}|${tamanho}` : keyValue;
+        data[key] = (data[key] || 0) + estoque;
+      }
       validRows++;
     }
 
     if (validRows === 0) {
-      setError("Nenhum item válido encontrado nos dados retornados (filial 98).");
+      setError("Nenhum item válido encontrado nos dados retornados (empresa 98).");
       return;
     }
 
     const label = `Space API (${filters.periodoInicio} a ${filters.periodoFim})`;
-    setErpData(data, label);
+    // Se usou SKU direto → source "api" (não precisa de VTEX para conciliar)
+    // Se usou cod_produto → source "planilha" (precisa de VTEX)
+    setErpData(data, label, usingSku ? "api" : "planilha");
     setImported(true);
-    console.log(`[ImportarSpaceAPI] ✓ ${Object.keys(data).length} itens importados via API`);
+    // Atualiza cache com status de importado
+    if (rawData) {
+      saveCache({ rawData, filters, imported: true, timestamp: new Date().toISOString() });
+    }
+    console.log(`[ImportarSpaceAPI] ✓ ${Object.keys(data).length} itens importados via API (chave: ${usingSku ? "produto_sku" : "produto_codigo"})`);
   }, [rawData, filters, setErpData]);
 
   // ── Exportar CSV ─────────────────────────────────────────────────────────

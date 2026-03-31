@@ -79,6 +79,9 @@ export default function ConciliacaoTable({ items }: Props) {
           borderRadius: 12,
           boxShadow: "var(--shadow-sm)",
           marginTop: totalPages > 1 ? 8 : 0,
+          maxHeight: "calc(100vh - 320px)",
+          overflowY: "auto",
+          overflowX: "auto",
         }}
       >
         <table style={{ width: "100%", minWidth: 600, borderCollapse: "collapse" }}>
@@ -87,6 +90,9 @@ export default function ConciliacaoTable({ items }: Props) {
               style={{
                 background: "var(--surface2)",
                 borderBottom: "1px solid var(--border)",
+                position: "sticky",
+                top: 0,
+                zIndex: 2,
               }}
             >
               {["SKU", "Cod. Produto", "Tamanho", "Descrição", "ERP", "MeLi", "Diferença", "Status", "MLB"].map(

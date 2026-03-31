@@ -123,12 +123,13 @@ export async function POST(req: NextRequest) {
         _id: "erp",
         erpData: body.erpData,
         erpFileName: body.erpFileName,
+        erpSource: body.erpSource ?? null,
         lastUpdated: body.lastUpdated,
         savedAt,
       }, { upsert: true });
 
       const sizeKB = body.erpData ? (JSON.stringify(body.erpData).length / 1024).toFixed(0) : "0";
-      console.log(`[stock-data] ✓ POST erp — ${sizeKB} KB salvo em ${savedAt}`);
+      console.log(`[stock-data] ✓ POST erp (${body.erpSource || "planilha"}) — ${sizeKB} KB salvo em ${savedAt}`);
 
     } else if (source === "vtex") {
       await col.replaceOne({ _id: "vtex" }, {
@@ -147,12 +148,13 @@ export async function POST(req: NextRequest) {
         _id: "meli",
         meliData: body.meliData,
         meliFileName: body.meliFileName,
+        meliSource: body.meliSource ?? null,
         lastUpdated: body.lastUpdated,
         savedAt,
       }, { upsert: true });
 
       const entries = body.meliData ? Object.keys(body.meliData as object).length : 0;
-      console.log(`[stock-data] ✓ POST meli — ${entries} itens salvos em ${savedAt}`);
+      console.log(`[stock-data] ✓ POST meli (${body.meliSource || "planilha"}) — ${entries} itens salvos em ${savedAt}`);
 
     } else if (source === "supply") {
       await col.replaceOne({ _id: "supply" }, {
