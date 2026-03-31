@@ -3,6 +3,12 @@ import { getDb } from "@/lib/mongodb";
 
 const SETTINGS_ID = "app_settings";
 
+interface SettingsDoc {
+  _id: string;
+  enableImport: boolean;
+  updatedAt?: string;
+}
+
 export interface AppSettings {
   enableImport: boolean;
 }
@@ -18,7 +24,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 export async function GET() {
   try {
     const db = await getDb();
-    const doc = await db.collection("settings").findOne({ _id: SETTINGS_ID });
+    const doc = await db.collection<SettingsDoc>("settings").findOne({ _id: SETTINGS_ID as any });
 
     if (!doc) {
       return NextResponse.json(DEFAULT_SETTINGS);
@@ -46,8 +52,8 @@ export async function POST(req: NextRequest) {
       enableImport: typeof body.enableImport === "boolean" ? body.enableImport : DEFAULT_SETTINGS.enableImport,
     };
 
-    await db.collection("settings").replaceOne(
-      { _id: SETTINGS_ID },
+    await db.collection<SettingsDoc>("settings").replaceOne(
+      { _id: SETTINGS_ID as any },
       { _id: SETTINGS_ID, ...settings, updatedAt: new Date().toISOString() },
       { upsert: true }
     );
