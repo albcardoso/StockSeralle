@@ -52,9 +52,9 @@ export async function POST(req: NextRequest) {
       enableImport: typeof body.enableImport === "boolean" ? body.enableImport : DEFAULT_SETTINGS.enableImport,
     };
 
-    await db.collection<SettingsDoc>("settings").replaceOne(
-      { _id: SETTINGS_ID as any },
-      { _id: SETTINGS_ID, ...settings, updatedAt: new Date().toISOString() },
+    await db.collection("settings").replaceOne(
+      { _id: SETTINGS_ID } as any,
+      { _id: SETTINGS_ID, ...settings, updatedAt: new Date().toISOString() } as any,
       { upsert: true }
     );
 
