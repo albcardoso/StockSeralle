@@ -122,6 +122,7 @@ export async function POST(req: NextRequest) {
       await col.replaceOne({ _id: "erp" }, {
         _id: "erp",
         erpData: body.erpData,
+        erpMeta: body.erpMeta ?? {},
         erpFileName: body.erpFileName,
         erpSource: body.erpSource ?? null,
         lastUpdated: body.lastUpdated,

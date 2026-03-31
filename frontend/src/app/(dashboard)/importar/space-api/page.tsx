@@ -270,6 +270,7 @@ export default function ImportarSpaceApiPage() {
     }
 
     const data: Record<string, number> = {};
+    const meta: Record<string, { codProduto?: string; tamanho?: string }> = {};
     let validRows = 0;
     const usingSku = !!skuKey; // Se tem SKU direto, a chave é SKU (sem VTEX)
 
@@ -291,6 +292,15 @@ export default function ImportarSpaceApiPage() {
       if (usingSku) {
         // Usando SKU direto — chave simples (compatível com MeLi.sku)
         data[keyValue] = (data[keyValue] || 0) + estoque;
+        // Guardar metadados extras (codProduto, tamanho) para exibir na conciliação
+        if (!meta[keyValue]) {
+          const codProduto = codKey ? String(row[codKey] ?? "").trim() : undefined;
+          const tamanho = tamanhoKey ? String(row[tamanhoKey] ?? "").trim().replace(/\.0$/, "") : undefined;
+          meta[keyValue] = {
+            codProduto: codProduto || undefined,
+            tamanho: tamanho || undefined,
+          };
+        }
       } else {
         // Usando cod_produto — precisa de tamanho para chave composta (requer VTEX)
         const tamanho = tamanhoKey ? String(row[tamanhoKey] ?? "").trim().replace(/\.0$/, "") : "";
@@ -308,7 +318,7 @@ export default function ImportarSpaceApiPage() {
     const label = `Space API (${filters.periodoInicio} a ${filters.periodoFim})`;
     // Se usou SKU direto → source "api" (não precisa de VTEX para conciliar)
     // Se usou cod_produto → source "planilha" (precisa de VTEX)
-    setErpData(data, label, usingSku ? "api" : "planilha");
+    setErpData(data, label, usingSku ? "api" : "planilha", usingSku ? meta : undefined);
     setImported(true);
     // Atualiza cache com status de importado
     if (rawData) {

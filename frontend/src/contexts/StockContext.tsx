@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
 import { mergeData, mergeDataFull } from "@/lib/xlsx-parser";
-import type { VtexEntry } from "@/lib/xlsx-parser";
+import type { VtexEntry, ErpMetaEntry } from "@/lib/xlsx-parser";
 import type { ConciliacaoItem, MeliItem, SupplyFlowItem } from "@/types";
 
 // ── Tipos de fonte dos dados ────────────────────────────────────────────────
@@ -11,6 +11,7 @@ type DataSource = "planilha" | "api";
 
 interface StockState {
   erpData: Record<string, number>;                         // Space ERP: cod_produto|tamanho → estoque
+  erpMeta: Record<string, ErpMetaEntry>;                   // Metadados ERP por SKU: codProduto, tamanho
   vtexMap: Record<string, VtexEntry>;                      // VTEX: sku → {cod_produto, nome_sku}
   meliData: Record<string, MeliItem>;                      // MeLi: sku → {qty, desc, entradaPendente, mlb}
   conciliacao: ConciliacaoItem[];
@@ -40,7 +41,7 @@ interface StockState {
  */
 
 interface StockContextValue extends StockState {
-  setErpData: (data: Record<string, number>, fileName: string, source?: DataSource) => void;
+  setErpData: (data: Record<string, number>, fileName: string, source?: DataSource, meta?: Record<string, ErpMetaEntry>) => void;
   setVtexData: (data: Record<string, VtexEntry>, fileName: string) => void;
   setMeliData: (data: Record<string, MeliItem>, fileName: string, source?: DataSource) => void;
   setSupplyFlowData: (data: SupplyFlowItem[], fileName: string) => void;
@@ -66,6 +67,7 @@ function recompute(
   vtexMap: Record<string, VtexEntry>,
   meliData: Record<string, MeliItem>,
   erpSource: DataSource | null,
+  erpMeta?: Record<string, ErpMetaEntry>,
 ): ConciliacaoItem[] {
   const hasErp = Object.keys(erpData).length > 0;
   const hasVtex = Object.keys(vtexMap).length > 0;
@@ -75,7 +77,7 @@ function recompute(
 
   // Se ERP veio da API Space → chave já é SKU → join direto (sem VTEX)
   if (erpSource === "api") {
-    return mergeData(erpData, meliData);
+    return mergeData(erpData, meliData, erpMeta);
   }
 
   // Se ERP veio de planilha → precisa VTEX para mapear cod_produto → SKU
@@ -84,13 +86,14 @@ function recompute(
   }
 
   // Fallback 2-way (caso ERP e MeLi compartilhem mesmas chaves)
-  return mergeData(erpData, meliData);
+  return mergeData(erpData, meliData, erpMeta);
 }
 
 // ── Persistência server-side (por fonte individual) ─────────────────────────
 
 interface PersistedState {
   erpData: Record<string, number>;
+  erpMeta?: Record<string, ErpMetaEntry>;
   vtexMap: Record<string, VtexEntry>;
   meliData: Record<string, MeliItem>;
   supplyFlow?: SupplyFlowItem[];
@@ -221,6 +224,7 @@ function clearServer() {
 export function StockProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<StockState>({
     erpData: {},
+    erpMeta: {},
     vtexMap: {},
     meliData: {},
     conciliacao: [],
@@ -243,6 +247,7 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
     loadFromServer().then((saved) => {
       if (saved) {
         const erpData = saved.erpData ?? {};
+        const erpMeta = saved.erpMeta ?? {};
         const vtexMap = saved.vtexMap ?? {};
         const meliData = saved.meliData ?? {};
         const erpSource = saved.erpSource ?? null;
@@ -253,10 +258,11 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
           || Object.keys(meliData).length > 0;
 
         if (hasData || (saved.supplyFlow && saved.supplyFlow.length > 0)) {
-          const conciliacao = recompute(erpData, vtexMap, meliData, erpSource);
+          const conciliacao = recompute(erpData, vtexMap, meliData, erpSource, erpMeta);
 
           setState({
             erpData,
+            erpMeta,
             vtexMap,
             meliData,
             conciliacao,
@@ -303,18 +309,21 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  const setErpData = useCallback((data: Record<string, number>, fileName: string, source: DataSource = "planilha") => {
+  const setErpData = useCallback((data: Record<string, number>, fileName: string, source: DataSource = "planilha", meta?: Record<string, ErpMetaEntry>) => {
     setState((prev) => {
+      const erpMeta = meta ?? {};
       const next = {
         ...prev,
         erpData: data,
+        erpMeta,
         erpFileName: fileName,
         erpSource: source,
-        conciliacao: recompute(data, prev.vtexMap, prev.meliData, source),
+        conciliacao: recompute(data, prev.vtexMap, prev.meliData, source, erpMeta),
         lastUpdated: new Date(),
       };
       saveSource("erp", {
         erpData: data,
+        erpMeta,
         erpFileName: fileName,
         erpSource: source,
         lastUpdated: new Date().toISOString(),
@@ -330,7 +339,7 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
           ...prev,
           vtexMap: data,
           vtexFileName: fileName,
-          conciliacao: recompute(prev.erpData, data, prev.meliData, prev.erpSource),
+          conciliacao: recompute(prev.erpData, data, prev.meliData, prev.erpSource, prev.erpMeta),
           lastUpdated: new Date(),
         };
         saveSource("vtex", {
@@ -352,7 +361,7 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
           meliData: data,
           meliFileName: fileName,
           meliSource: source,
-          conciliacao: recompute(prev.erpData, prev.vtexMap, data, prev.erpSource),
+          conciliacao: recompute(prev.erpData, prev.vtexMap, data, prev.erpSource, prev.erpMeta),
           lastUpdated: new Date(),
         };
         saveSource("meli", {
@@ -371,6 +380,7 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
     clearServer();
     setState({
       erpData: {},
+      erpMeta: {},
       vtexMap: {},
       meliData: {},
       conciliacao: [],

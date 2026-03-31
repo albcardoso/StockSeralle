@@ -33,6 +33,12 @@ export interface VtexEntry {
   nome_sku: string;
 }
 
+/** Metadados extras do ERP por SKU (usado no merge 2-way para preencher codProduto/tamanho). */
+export interface ErpMetaEntry {
+  codProduto?: string;
+  tamanho?: string;
+}
+
 // ── Opções de performance para arquivos grandes ────────────────────────────────
 
 /**
@@ -844,10 +850,14 @@ export function mergeDataFull(
 /**
  * Join simples (2-way): erpData e meliData compartilham as mesmas chaves.
  * Usado quando VTEX não foi importado.
+ *
+ * @param erpMeta — metadados opcionais do ERP por SKU (codProduto, tamanho).
+ *   Populado quando o ERP vem da API Space (que retorna produto_codigo e tamanho_descricao).
  */
 export function mergeData(
   erpData: Record<string, number>,
-  meliData: Record<string, MeliItem>
+  meliData: Record<string, MeliItem>,
+  erpMeta?: Record<string, ErpMetaEntry>,
 ): ConciliacaoItem[] {
   const allSkus = new Set([...Object.keys(erpData), ...Object.keys(meliData)]);
   const items: ConciliacaoItem[] = [];
@@ -856,6 +866,7 @@ export function mergeData(
     const qtdErp = erpData[sku];
     const meliEntry = meliData[sku];
     const qtdMeli = meliEntry?.qty;
+    const meta = erpMeta?.[sku];
 
     let status: ConciliacaoItem["status"];
     if (qtdErp !== undefined && qtdMeli !== undefined) {
@@ -866,7 +877,16 @@ export function mergeData(
       status = "so_meli";
     }
 
-    items.push({ sku, qtdErp, qtdMeli, descricao: meliEntry?.desc, status });
+    items.push({
+      sku,
+      codProduto: meta?.codProduto,
+      tamanho: meta?.tamanho,
+      descricao: meliEntry?.desc,
+      qtdErp,
+      qtdMeli,
+      mlb: meliEntry?.mlb || undefined,
+      status,
+    });
   }
 
   const order: Record<ConciliacaoItem["status"], number> = {
