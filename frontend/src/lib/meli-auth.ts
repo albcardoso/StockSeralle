@@ -135,7 +135,7 @@ export async function refreshAccessToken(currentRefreshToken: string): Promise<M
  */
 export async function getValidToken(): Promise<MeliTokenData | null> {
   const db = await getDb();
-  const stored = await db.collection<MeliTokenData>("meli_tokens").findOne({ _id: "meli_token" });
+  const stored = await db.collection<MeliTokenData>("meli_tokens").findOne({ _id: "meli_token" } as any);
 
   if (!stored) {
     console.log("[meli-auth] Nenhum token salvo. Usuário precisa autenticar.");
@@ -205,8 +205,8 @@ async function saveToken(data: {
 
   const db = await getDb();
   await db.collection("meli_tokens").replaceOne(
-    { _id: "meli_token" },
-    tokenDoc,
+    { _id: "meli_token" } as any,
+    tokenDoc as any,
     { upsert: true }
   );
 
@@ -222,7 +222,7 @@ async function saveToken(data: {
 
 export async function disconnectMeli(): Promise<void> {
   const db = await getDb();
-  await db.collection("meli_tokens").deleteOne({ _id: "meli_token" });
+  await db.collection("meli_tokens").deleteOne({ _id: "meli_token" } as any);
   console.log("[meli-auth] Token removido. Conta MeLi desconectada.");
 }
 
