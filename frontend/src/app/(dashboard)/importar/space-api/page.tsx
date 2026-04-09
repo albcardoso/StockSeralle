@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef } from "react";
 import { useStock } from "@/contexts/StockContext";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -18,6 +18,15 @@ function defaultFim(): string {
   const yyyy = d.getFullYear();
   const last = new Date(yyyy, mm, 0).getDate();
   return `${String(last).padStart(2, "0")}-${String(mm).padStart(2, "0")}-${yyyy}`;
+}
+
+/** Retorna a data de hoje no formato DD-MM-YYYY (sysdate) */
+function todaySpaceDate(): string {
+  const d = new Date();
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}-${mm}-${yyyy}`;
 }
 
 function toSpaceDate(iso: string): string {
@@ -119,11 +128,62 @@ export default function ImportarSpaceApiPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
 
-  // Colunas dinâmicas
-  const columns = useMemo(() => {
+  // Colunas dinâmicas (ordem original da API)
+  const columnsFromData = useMemo(() => {
     if (!rawData || rawData.length === 0) return [];
     return Object.keys(rawData[0]);
   }, [rawData]);
+
+  // ── Reordenação de colunas (drag & drop) ────────────────────────────────
+  const [columnOrder, setColumnOrder] = useState<string[] | null>(null);
+  const dragColRef = useRef<string | null>(null);
+  const dragOverColRef = useRef<string | null>(null);
+
+  // Colunas efetivas: usa a ordem customizada se existir, senão a original
+  const columns = useMemo(() => {
+    if (!columnOrder) return columnsFromData;
+    // Garante que colunas novas (não presentes no order) sejam incluídas no final
+    const ordered = columnOrder.filter((c) => columnsFromData.includes(c));
+    const extras = columnsFromData.filter((c) => !columnOrder.includes(c));
+    return [...ordered, ...extras];
+  }, [columnsFromData, columnOrder]);
+
+  // Reset da ordem quando os dados mudam (nova consulta)
+  const prevColumnsRef = useRef<string>(JSON.stringify(columnsFromData));
+  if (JSON.stringify(columnsFromData) !== prevColumnsRef.current) {
+    prevColumnsRef.current = JSON.stringify(columnsFromData);
+    setColumnOrder(null);
+  }
+
+  const handleColumnDragStart = useCallback((col: string) => {
+    dragColRef.current = col;
+  }, []);
+
+  const handleColumnDragOver = useCallback((e: React.DragEvent, col: string) => {
+    e.preventDefault();
+    dragOverColRef.current = col;
+  }, []);
+
+  const handleColumnDrop = useCallback(() => {
+    const from = dragColRef.current;
+    const to = dragOverColRef.current;
+    if (!from || !to || from === to) return;
+
+    setColumnOrder((prev) => {
+      const current = prev ?? [...columnsFromData];
+      const newOrder = [...current];
+      const fromIdx = newOrder.indexOf(from);
+      const toIdx = newOrder.indexOf(to);
+      if (fromIdx === -1 || toIdx === -1) return current;
+      // Remove da posição original e insere na nova
+      newOrder.splice(fromIdx, 1);
+      newOrder.splice(toIdx, 0, from);
+      return newOrder;
+    });
+
+    dragColRef.current = null;
+    dragOverColRef.current = null;
+  }, [columnsFromData]);
 
   // Dados filtrados por coluna
   const filteredData = useMemo(() => {
@@ -159,33 +219,135 @@ export default function ImportarSpaceApiPage() {
     setPage(1);
 
     try {
-      const resp = await fetch("/api/space-estoque", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          idRelatorio: 85,
-          idEmpresa: filters.idEmpresa,
-          periodoInicio: filters.periodoInicio,
-          periodoFim: filters.periodoFim,
-          empresaEstoque: filters.empresaEstoque,
-          empresaVenda: filters.empresaVenda,
+      const hoje = todaySpaceDate();
+
+      // ── Duas chamadas em paralelo: período selecionado + sysdate (hoje) ──
+      const [respPeriodo, respHoje] = await Promise.all([
+        // 1) Consulta com o período do filtro (como já funcionava)
+        fetch("/api/space-estoque", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            idRelatorio: 85,
+            idEmpresa: filters.idEmpresa,
+            periodoInicio: filters.periodoInicio,
+            periodoFim: filters.periodoFim,
+            empresaEstoque: filters.empresaEstoque,
+            empresaVenda: filters.empresaVenda,
+          }),
         }),
-      });
+        // 2) Consulta com sysdate (hoje) para "estoque_hoje"
+        fetch("/api/space-estoque", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            idRelatorio: 85,
+            idEmpresa: filters.idEmpresa,
+            periodoInicio: hoje,
+            periodoFim: hoje,
+            empresaEstoque: filters.empresaEstoque,
+            empresaVenda: filters.empresaVenda,
+          }),
+        }),
+      ]);
 
-      const json = await resp.json();
+      const jsonPeriodo = await respPeriodo.json();
+      const jsonHoje = await respHoje.json();
 
-      if (!resp.ok || !json.success) {
-        throw new Error(json.error || json.detail || `Erro ${resp.status}`);
+
+      if (!respPeriodo.ok || !jsonPeriodo.success) {
+        throw new Error(jsonPeriodo.error || jsonPeriodo.detail || `Erro ${respPeriodo.status}`);
       }
 
-      const rows = Array.isArray(json.data) ? json.data : [];
+      const rows: SpaceApiRow[] = Array.isArray(jsonPeriodo.data) ? jsonPeriodo.data : [];
+
       if (rows.length === 0) {
         setError("Nenhum registro retornado pela API Space para os filtros informados.");
         clearCache();
       } else {
-        setRawData(rows);
+        // ── Monta mapa de estoque_hoje por chave (produto_sku ou produto_codigo) ──
+        const hojeRows: SpaceApiRow[] =
+          respHoje.ok && jsonHoje.success && Array.isArray(jsonHoje.data) ? jsonHoje.data : [];
+
+        const hojeMap = new Map<string, number>();
+        if (hojeRows.length > 0) {
+          const hojeKeys = Object.keys(hojeRows[0]);
+          const norm = (s: string) => s.toUpperCase().replace(/[^A-Z0-9_]/g, "");
+
+          // Detecta chave e coluna de estoque nos dados de hoje
+          const skuKeyH = hojeKeys.find((k) => {
+            const n = norm(k);
+            return n === "PRODUTO_SKU" || n === "PRODUTOSKU" || n === "SKU";
+          });
+          const codKeyH = hojeKeys.find((k) => {
+            const n = norm(k);
+            return n === "PRODUTO_CODIGO" || n === "PRODUTOCODIGO" || n === "CODPRODUTO" || n === "COD_PRODUTO";
+          });
+          const estoqueKeyH = hojeKeys.find((k) => {
+            const n = norm(k);
+            return n === "ESTOQUE" || n === "ESTOQUE_DISPONIVEL" || n === "ESTOQUEDISPONIVEL" || n.includes("ESTOQUE");
+          });
+          const tamanhoKeyH = hojeKeys.find((k) => {
+            const n = norm(k);
+            return n === "TAMANHO_DESCRICAO" || n === "TAMANHODESCRICAO" || n === "TAMANHO" || n.includes("TAMANHO");
+          });
+
+          const primaryKeyH = skuKeyH || codKeyH;
+
+          if (primaryKeyH && estoqueKeyH) {
+            for (const hRow of hojeRows) {
+              const keyVal = String(hRow[primaryKeyH] ?? "").trim();
+              if (!keyVal) continue;
+              const estoque = Number(hRow[estoqueKeyH]) || 0;
+              // Chave composta se não usa SKU direto
+              let mapKey = keyVal;
+              if (!skuKeyH && tamanhoKeyH) {
+                const tam = String(hRow[tamanhoKeyH] ?? "").trim().replace(/\.0$/, "");
+                if (tam) mapKey = `${keyVal}|${tam}`;
+              }
+              hojeMap.set(mapKey, (hojeMap.get(mapKey) || 0) + estoque);
+            }
+          }
+          console.log(`[space-estoque] Mapa estoque_hoje: ${hojeMap.size} itens (sysdate: ${hoje})`);
+        }
+
+        // ── Detecta chave nos dados do período para fazer o match ──
+        const rowKeys = Object.keys(rows[0]);
+        const normR = (s: string) => s.toUpperCase().replace(/[^A-Z0-9_]/g, "");
+        const skuKeyR = rowKeys.find((k) => {
+          const n = normR(k);
+          return n === "PRODUTO_SKU" || n === "PRODUTOSKU" || n === "SKU";
+        });
+        const codKeyR = rowKeys.find((k) => {
+          const n = normR(k);
+          return n === "PRODUTO_CODIGO" || n === "PRODUTOCODIGO" || n === "CODPRODUTO" || n === "COD_PRODUTO";
+        });
+        const tamanhoKeyR = rowKeys.find((k) => {
+          const n = normR(k);
+          return n === "TAMANHO_DESCRICAO" || n === "TAMANHODESCRICAO" || n === "TAMANHO" || n.includes("TAMANHO");
+        });
+        const primaryKeyR = skuKeyR || codKeyR;
+
+        // ── Mescla coluna "estoque_hoje" em cada linha ──
+        const mergedRows = rows.map((row) => {
+          let estoqueHoje: number | string = "";
+          if (primaryKeyR && hojeMap.size > 0) {
+            const keyVal = String(row[primaryKeyR] ?? "").trim();
+            let mapKey = keyVal;
+            if (!skuKeyR && tamanhoKeyR) {
+              const tam = String(row[tamanhoKeyR] ?? "").trim().replace(/\.0$/, "");
+              if (tam) mapKey = `${keyVal}|${tam}`;
+            }
+            if (hojeMap.has(mapKey)) {
+              estoqueHoje = hojeMap.get(mapKey)!;
+            }
+          }
+          return { ...row, estoque_hoje: estoqueHoje };
+        });
+
+        setRawData(mergedRows);
         setImported(false);
-        saveCache({ rawData: rows, filters, imported: false, timestamp: new Date().toISOString() });
+        saveCache({ rawData: mergedRows, filters, imported: false, timestamp: new Date().toISOString() });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -331,7 +493,8 @@ export default function ImportarSpaceApiPage() {
 
   const handleExport = useCallback(() => {
     if (!filteredData || filteredData.length === 0) return;
-    const cols = Object.keys(filteredData[0]);
+    // Usa a ordem customizada das colunas (se houver) para o CSV
+    const cols = columns.length > 0 ? columns : Object.keys(filteredData[0]);
     const header = cols.map((c) => `"${c}"`).join(",");
     const rows = filteredData.map((row) =>
       cols.map((c) => `"${fmt(row[c])}"`).join(",")
@@ -344,7 +507,7 @@ export default function ImportarSpaceApiPage() {
     a.download = `space-api_${filters.periodoInicio}_${filters.periodoFim}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [filteredData, filters]);
+  }, [filteredData, filters, columns]);
 
   // ── Render ───────────────────────────────────────────────────────────────
 
@@ -450,7 +613,7 @@ export default function ImportarSpaceApiPage() {
             cursor: loading ? "not-allowed" : "pointer", transition: "background 0.15s",
           }}
         >
-          {loading ? "Consultando..." : "Consultar Space API"}
+          {loading ? "Consultando período + estoque hoje..." : "Consultar Space API"}
         </button>
       </div>
 
@@ -476,7 +639,16 @@ export default function ImportarSpaceApiPage() {
               </span>
             </div>
 
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {columnOrder && (
+                <button
+                  onClick={() => setColumnOrder(null)}
+                  title="Resetar ordem das colunas"
+                  style={{ padding: "8px 12px", background: "var(--surface)", color: "var(--slate)", border: "1px solid var(--border)", borderRadius: 7, fontSize: 11, fontWeight: 600, cursor: "pointer" }}
+                >
+                  ↺ Resetar colunas
+                </button>
+              )}
               <button
                 onClick={handleExport}
                 style={{ padding: "8px 16px", background: "var(--blue-bg)", color: "var(--blue)", border: "1px solid var(--blue-border)", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer" }}
@@ -509,11 +681,30 @@ export default function ImportarSpaceApiPage() {
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "DM Mono, monospace", fontSize: 12 }}>
               <thead>
-                {/* Cabeçalho */}
+                {/* Cabeçalho (arrastável para reordenar) */}
                 <tr>
                   {columns.map((col) => (
-                    <th key={col} style={{ padding: "8px 10px", textAlign: "left", borderBottom: "2px solid var(--border)", color: "var(--slate)", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap", position: "sticky", top: 0, background: "var(--card)", zIndex: 2 }}>
-                      {col}
+                    <th
+                      key={col}
+                      draggable
+                      onDragStart={() => handleColumnDragStart(col)}
+                      onDragOver={(e) => handleColumnDragOver(e, col)}
+                      onDrop={handleColumnDrop}
+                      style={{
+                        padding: "8px 10px", textAlign: "left", borderBottom: "2px solid var(--border)",
+                        color: col === "estoque_hoje" ? "var(--blue)" : "var(--slate)",
+                        fontSize: 11, fontWeight: col === "estoque_hoje" ? 700 : 600, whiteSpace: "nowrap",
+                        position: "sticky", top: 0,
+                        background: col === "estoque_hoje" ? "var(--blue-bg)" : "var(--card)",
+                        zIndex: 2,
+                        cursor: "grab",
+                        userSelect: "none",
+                      }}
+                    >
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ opacity: 0.35, fontSize: 10 }}>⠿</span>
+                        {col === "estoque_hoje" ? `📦 estoque_hoje (${todaySpaceDate()})` : col}
+                      </span>
                     </th>
                   ))}
                 </tr>
@@ -543,7 +734,13 @@ export default function ImportarSpaceApiPage() {
                 {pagedData.map((row, i) => (
                   <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : "var(--surface)" }}>
                     {columns.map((col, j) => (
-                      <td key={j} style={{ padding: "6px 10px", borderBottom: "1px solid var(--border)", color: "var(--ink)", whiteSpace: "nowrap", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }}>
+                      <td key={j} style={{
+                        padding: "6px 10px", borderBottom: "1px solid var(--border)",
+                        color: col === "estoque_hoje" ? "var(--blue)" : "var(--ink)",
+                        fontWeight: col === "estoque_hoje" ? 700 : 400,
+                        background: col === "estoque_hoje" ? "var(--blue-bg)" : undefined,
+                        whiteSpace: "nowrap", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis",
+                      }}>
                         {fmt(row[col])}
                       </td>
                     ))}
