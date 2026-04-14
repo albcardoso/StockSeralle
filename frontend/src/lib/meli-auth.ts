@@ -17,7 +17,9 @@
 
 import { getDb } from "./mongodb";
 
-const MELI_AUTH_URL = "https://auth.mercadolibre.com.br/authorization";
+// IMPORTANTE: No Brasil, o domínio é "mercadolivre" (com V), não "mercadolibre" (com B).
+// Domínios válidos por país: MLB=mercadolivre.com.br, MLA=mercadolibre.com.ar, MLM=mercadolibre.com.mx
+const MELI_AUTH_URL = "https://auth.mercadolivre.com.br/authorization";
 const MELI_TOKEN_URL = "https://api.mercadolibre.com/oauth/token";
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────

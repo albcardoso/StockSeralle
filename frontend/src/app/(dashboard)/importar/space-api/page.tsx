@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { useStock } from "@/contexts/StockContext";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -128,16 +128,59 @@ export default function ImportarSpaceApiPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
 
-  // Colunas dinâmicas (ordem original da API)
+  // Colunas dinâmicas (ordem original da API) — esconde "estoque" (usa "estoque_hoje" na conciliação)
+  const HIDDEN_COLUMNS = useMemo(() => new Set(["estoque"]), []);
   const columnsFromData = useMemo(() => {
     if (!rawData || rawData.length === 0) return [];
-    return Object.keys(rawData[0]);
-  }, [rawData]);
+    return Object.keys(rawData[0]).filter((c) => !HIDDEN_COLUMNS.has(c));
+  }, [rawData, HIDDEN_COLUMNS]);
 
   // ── Reordenação de colunas (drag & drop) ────────────────────────────────
   const [columnOrder, setColumnOrder] = useState<string[] | null>(null);
   const dragColRef = useRef<string | null>(null);
   const dragOverColRef = useRef<string | null>(null);
+
+  // ── Ordenação por coluna (order by) ─────────────────────────────────────
+  type SortDir = "asc" | "desc";
+  const [sortConfig, setSortConfig] = useState<{ col: string; dir: SortDir } | null>(null);
+
+  const handleSortClick = useCallback((col: string) => {
+    setSortConfig((prev) => {
+      if (!prev || prev.col !== col) return { col, dir: "asc" };
+      if (prev.dir === "asc") return { col, dir: "desc" };
+      return null; // terceiro clique remove ordenação
+    });
+  }, []);
+
+  // ── Redimensionamento de colunas ────────────────────────────────────────
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const resizingRef = useRef<{ col: string; startX: number; startWidth: number } | null>(null);
+
+  const handleResizeStart = useCallback((e: React.MouseEvent, col: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startWidth = columnWidths[col] || (e.currentTarget as HTMLElement).parentElement?.getBoundingClientRect().width || 120;
+    resizingRef.current = { col, startX: e.clientX, startWidth };
+  }, [columnWidths]);
+
+  useEffect(() => {
+    function onMouseMove(e: MouseEvent) {
+      if (!resizingRef.current) return;
+      const { col, startX, startWidth } = resizingRef.current;
+      const delta = e.clientX - startX;
+      const newWidth = Math.max(60, startWidth + delta);
+      setColumnWidths((prev) => ({ ...prev, [col]: newWidth }));
+    }
+    function onMouseUp() {
+      resizingRef.current = null;
+    }
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, []);
 
   // Colunas efetivas: usa a ordem customizada se existir, senão a original
   const columns = useMemo(() => {
@@ -186,7 +229,7 @@ export default function ImportarSpaceApiPage() {
   }, [columnsFromData]);
 
   // Dados filtrados por coluna
-  const filteredData = useMemo(() => {
+  const filteredDataRaw = useMemo(() => {
     if (!rawData) return [];
     const activeFilters = Object.entries(columnFilters).filter(([, v]) => v.trim() !== "");
     if (activeFilters.length === 0) return rawData;
@@ -198,6 +241,37 @@ export default function ImportarSpaceApiPage() {
       })
     );
   }, [rawData, columnFilters]);
+
+  // Dados ordenados (order by)
+  const filteredData = useMemo(() => {
+    if (!sortConfig) return filteredDataRaw;
+    const { col, dir } = sortConfig;
+    const factor = dir === "asc" ? 1 : -1;
+
+    const sorted = [...filteredDataRaw].sort((a, b) => {
+      const va = a[col];
+      const vb = b[col];
+
+      // Nulos/vazios sempre no fim
+      const aEmpty = va === null || va === undefined || va === "";
+      const bEmpty = vb === null || vb === undefined || vb === "";
+      if (aEmpty && bEmpty) return 0;
+      if (aEmpty) return 1;
+      if (bEmpty) return -1;
+
+      // Tenta comparar como número
+      const na = typeof va === "number" ? va : Number(String(va).replace(",", "."));
+      const nb = typeof vb === "number" ? vb : Number(String(vb).replace(",", "."));
+      if (!isNaN(na) && !isNaN(nb)) {
+        return (na - nb) * factor;
+      }
+
+      // Compara como string
+      return String(va).localeCompare(String(vb), "pt-BR", { numeric: true, sensitivity: "base" }) * factor;
+    });
+
+    return sorted;
+  }, [filteredDataRaw, sortConfig]);
 
   // Paginação computada
   const totalFiltered = filteredData.length;
@@ -395,8 +469,13 @@ export default function ImportarSpaceApiPage() {
       );
     });
 
-    // Estoque
-    const estoqueKey = keys.find((k) => {
+    // Estoque — prioriza "estoque_hoje" (sysdate de hoje) sobre "estoque" (período)
+    // Regra: conciliação sempre usa o estoque atual, não o do período consultado
+    const estoqueHojeKey = keys.find((k) => {
+      const n = norm(k);
+      return n === "ESTOQUE_HOJE" || n === "ESTOQUEHOJE";
+    });
+    const estoqueKey = estoqueHojeKey || keys.find((k) => {
       const n = norm(k);
       return (
         n === "ESTOQUE" ||
@@ -640,10 +719,14 @@ export default function ImportarSpaceApiPage() {
             </div>
 
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              {columnOrder && (
+              {(columnOrder || sortConfig || Object.keys(columnWidths).length > 0) && (
                 <button
-                  onClick={() => setColumnOrder(null)}
-                  title="Resetar ordem das colunas"
+                  onClick={() => {
+                    setColumnOrder(null);
+                    setSortConfig(null);
+                    setColumnWidths({});
+                  }}
+                  title="Resetar ordem, ordenação e largura das colunas"
                   style={{ padding: "8px 12px", background: "var(--surface)", color: "var(--slate)", border: "1px solid var(--border)", borderRadius: 7, fontSize: 11, fontWeight: 600, cursor: "pointer" }}
                 >
                   ↺ Resetar colunas
@@ -679,34 +762,83 @@ export default function ImportarSpaceApiPage() {
 
           {/* Tabela com filtro por coluna + paginação */}
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "DM Mono, monospace", fontSize: 12 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "DM Mono, monospace", fontSize: 12, tableLayout: "fixed" }}>
+              <colgroup>
+                {columns.map((col) => (
+                  <col key={col} style={{ width: columnWidths[col] ? `${columnWidths[col]}px` : undefined }} />
+                ))}
+              </colgroup>
               <thead>
-                {/* Cabeçalho (arrastável para reordenar) */}
+                {/* Cabeçalho: drag handle (⠿) + nome clicável p/ ordenar + indicador ↑↓ + handle de resize */}
                 <tr>
-                  {columns.map((col) => (
-                    <th
-                      key={col}
-                      draggable
-                      onDragStart={() => handleColumnDragStart(col)}
-                      onDragOver={(e) => handleColumnDragOver(e, col)}
-                      onDrop={handleColumnDrop}
-                      style={{
-                        padding: "8px 10px", textAlign: "left", borderBottom: "2px solid var(--border)",
-                        color: col === "estoque_hoje" ? "var(--blue)" : "var(--slate)",
-                        fontSize: 11, fontWeight: col === "estoque_hoje" ? 700 : 600, whiteSpace: "nowrap",
-                        position: "sticky", top: 0,
-                        background: col === "estoque_hoje" ? "var(--blue-bg)" : "var(--card)",
-                        zIndex: 2,
-                        cursor: "grab",
-                        userSelect: "none",
-                      }}
-                    >
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                        <span style={{ opacity: 0.35, fontSize: 10 }}>⠿</span>
-                        {col === "estoque_hoje" ? `📦 estoque_hoje (${todaySpaceDate()})` : col}
-                      </span>
-                    </th>
-                  ))}
+                  {columns.map((col) => {
+                    const isSorted = sortConfig?.col === col;
+                    const sortIndicator = isSorted ? (sortConfig!.dir === "asc" ? "↑" : "↓") : "↕";
+                    return (
+                      <th
+                        key={col}
+                        style={{
+                          padding: "8px 10px", textAlign: "left", borderBottom: "2px solid var(--border)",
+                          color: col === "estoque_hoje" ? "var(--blue)" : "var(--slate)",
+                          fontSize: 11, fontWeight: col === "estoque_hoje" ? 700 : 600, whiteSpace: "nowrap",
+                          position: "sticky", top: 0,
+                          background: col === "estoque_hoje" ? "var(--blue-bg)" : "var(--card)",
+                          zIndex: 2,
+                          userSelect: "none",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 4, position: "relative" }}>
+                          {/* Drag handle — só esse é arrastável */}
+                          <span
+                            draggable
+                            onDragStart={() => handleColumnDragStart(col)}
+                            onDragOver={(e) => handleColumnDragOver(e, col)}
+                            onDrop={handleColumnDrop}
+                            title="Arraste para reordenar"
+                            style={{ opacity: 0.4, fontSize: 10, cursor: "grab", padding: "0 2px" }}
+                          >
+                            ⠿
+                          </span>
+
+                          {/* Nome da coluna — clicável para ordenar */}
+                          <span
+                            onClick={() => handleSortClick(col)}
+                            title={`Ordenar por ${col}`}
+                            style={{ cursor: "pointer", flex: 1, display: "flex", alignItems: "center", gap: 4, overflow: "hidden", textOverflow: "ellipsis" }}
+                          >
+                            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {col === "estoque_hoje" ? `📦 estoque_hoje (${todaySpaceDate()})` : col}
+                            </span>
+                            <span style={{
+                              fontSize: 10,
+                              opacity: isSorted ? 1 : 0.35,
+                              color: isSorted ? "var(--blue)" : "var(--mist)",
+                              fontWeight: 700,
+                            }}>
+                              {sortIndicator}
+                            </span>
+                          </span>
+
+                          {/* Handle de resize — borda direita arrastável */}
+                          <span
+                            onMouseDown={(e) => handleResizeStart(e, col)}
+                            title="Arraste para redimensionar"
+                            style={{
+                              position: "absolute",
+                              top: -8,
+                              right: -10,
+                              bottom: -8,
+                              width: 8,
+                              cursor: "col-resize",
+                              userSelect: "none",
+                            }}
+                          />
+                        </div>
+                      </th>
+                    );
+                  })}
                 </tr>
                 {/* Filtros por coluna */}
                 <tr>
@@ -739,7 +871,7 @@ export default function ImportarSpaceApiPage() {
                         color: col === "estoque_hoje" ? "var(--blue)" : "var(--ink)",
                         fontWeight: col === "estoque_hoje" ? 700 : 400,
                         background: col === "estoque_hoje" ? "var(--blue-bg)" : undefined,
-                        whiteSpace: "nowrap", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis",
+                        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                       }}>
                         {fmt(row[col])}
                       </td>
